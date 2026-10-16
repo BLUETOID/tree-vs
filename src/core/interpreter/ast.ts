@@ -14,10 +14,13 @@ export type ASTNodeType =
   | 'ReturnStatement'
   | 'ExpressionStatement'
   | 'BlockStatement'
+  | 'EmptyStatement'
   | 'BinaryExpression'
   | 'UnaryExpression'
   | 'CallExpression'
+  | 'MemberCallExpression'
   | 'MemberAccessExpression'
+  | 'ConditionalExpression'
   | 'NewExpression'
   | 'Identifier'
   | 'Literal';
@@ -89,6 +92,10 @@ export interface BlockStatementNode extends BaseASTNode {
   body: BaseASTNode[];
 }
 
+export interface EmptyStatementNode extends BaseASTNode {
+  type: 'EmptyStatement';
+}
+
 export interface ExpressionStatementNode extends BaseASTNode {
   type: 'ExpressionStatement';
   expression: BaseASTNode;
@@ -101,9 +108,22 @@ export interface BinaryExpressionNode extends BaseASTNode {
   right: BaseASTNode;
 }
 
+export interface UnaryExpressionNode extends BaseASTNode {
+  type: 'UnaryExpression';
+  operator: string;
+  argument: BaseASTNode;
+}
+
 export interface CallExpressionNode extends BaseASTNode {
   type: 'CallExpression';
   callee: string;
+  args: BaseASTNode[];
+}
+
+export interface MemberCallExpressionNode extends BaseASTNode {
+  type: 'MemberCallExpression';
+  object: BaseASTNode;
+  method: string;
   args: BaseASTNode[];
 }
 
@@ -111,6 +131,13 @@ export interface MemberAccessNode extends BaseASTNode {
   type: 'MemberAccessExpression';
   object: BaseASTNode;
   property: string;
+}
+
+export interface ConditionalExpressionNode extends BaseASTNode {
+  type: 'ConditionalExpression';
+  condition: BaseASTNode;
+  consequent: BaseASTNode;
+  alternate: BaseASTNode;
 }
 
 export interface NewExpressionNode extends BaseASTNode {

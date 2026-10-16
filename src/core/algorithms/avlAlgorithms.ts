@@ -26,6 +26,11 @@ export function computeHeightsAndBF(
   return h;
 }
 
+let avlNodeIdCounter = 1;
+export function resetAvlNodeIdCounter() {
+  avlNodeIdCounter = 1;
+}
+
 export function generateAvlInsertSteps(
   initialNodes: Record<string, TreeNodeData>,
   rootId: string | null,
@@ -37,7 +42,11 @@ export function generateAvlInsertSteps(
 
   computeHeightsAndBF(currentNodes, rootId);
 
-  const newId = `node_${Date.now() % 100000}`;
+  let nextNum = avlNodeIdCounter++;
+  while (currentNodes[`node_${nextNum}`]) {
+    nextNum = avlNodeIdCounter++;
+  }
+  const newId = `node_${nextNum}`;
 
   if (!rootId || !currentNodes[rootId]) {
     currentNodes[newId] = {

@@ -15,10 +15,14 @@ import type {
   WhileStatementNode,
   ReturnStatementNode,
   BlockStatementNode,
+  EmptyStatementNode,
   ExpressionStatementNode,
   BinaryExpressionNode,
+  UnaryExpressionNode,
   CallExpressionNode,
+  MemberCallExpressionNode,
   MemberAccessNode,
+  ConditionalExpressionNode,
   NewExpressionNode,
   IdentifierNode,
   LiteralNode,
@@ -189,12 +193,12 @@ export class Parser {
     return { type: 'BlockStatement', line: startLine, body };
   }
 
-  public parseStatement(): BaseASTNode | null {
+  public parseStatement(): BaseASTNode {
     const token = this.peek();
 
     if (token.value === ';') {
       this.advance();
-      return null;
+      return { type: 'EmptyStatement', line: token.line } as EmptyStatementNode;
     }
 
     if (token.value === '{') {
@@ -214,18 +218,32 @@ export class Parser {
     }
 
     // Variable declaration or expression statement
+    const KNOWN_TYPE_NAMES = new Set([
+      'int',
+      'void',
+      'bool',
+      'string',
+      'auto',
+      'char',
+      'float',
+      'double',
+      'TreeNode',
+      'Node',
+      'ListNode',
+      'queue',
+      'vector',
+      'stack',
+    ]);
     const next = this.peekNext();
     if (
-      ['int', 'void', 'bool', 'string', 'auto', 'TreeNode', 'queue', 'vector', 'stack'].includes(
-        token.value
-      ) ||
-      next.value === '*' ||
-      (token.type === 'IDENTIFIER' && next.type === 'IDENTIFIER')
+      KNOWN_TYPE_NAMES.has(token.value) ||
+      (token.type === 'IDENTIFIER' && KNOWN_TYPE_NAMES.has(token.value) && (next.value === '*' || next.value === '<' || next.value === '&')) ||
+      (token.type === 'IDENTIFIER' && next.type === 'IDENTIFIER' && KNOWN_TYPE_NAMES.has(token.value))
     ) {
       return this.parseVarDecl();
     }
 
-    // Member assignment e.g. root->left = ...
+    // Member assignment e.g. root->left = ... or expression statement
     return this.parseAssignmentOrExpr();
   }
 
@@ -234,10 +252,10 @@ export class Parser {
     this.expect('(');
     const condition = this.parseExpression();
     this.expect(')');
-    const consequent = this.peek().value === '{' ? this.parseBlock() : this.parseStatement()!;
+    const consequent = this.peek().value === '{' ? this.parseBlock() : this.parseStatement();
     let alternate: BaseASTNode | undefined;
     if (this.match('else')) {
-      alternate = this.peek().value === '{' ? this.parseBlock() : this.parseStatement()!;
+      alternate = this.peek().value === '{' ? this.parseBlock() : this.parseStatement();
     }
     return {
       type: 'IfStatement',
@@ -253,7 +271,7 @@ export class Parser {
     this.expect('(');
     const condition = this.parseExpression();
     this.expect(')');
-    const body = this.peek().value === '{' ? this.parseBlock() : this.parseStatement()!;
+    const body = this.peek().value === '{' ? this.parseBlock() : this.parseStatement();
     return {
       type: 'WhileStatement',
       line: token.line,
@@ -268,7 +286,7 @@ export class Parser {
     if (this.peek().value !== ';') {
       argument = this.parseExpression();
     }
-    this.match(';');
+    if (!this.match(';')) this.expect(';');
     return {
       type: 'ReturnStatement',
       line: token.line,
@@ -285,7 +303,7 @@ export class Parser {
     if (this.match('=')) {
       initializer = this.parseExpression();
     }
-    this.match(';');
+    if (!this.match(';')) this.expect(';');
 
     return {
       type: 'VariableDeclaration',
@@ -301,7 +319,7 @@ export class Parser {
 
     if (this.match('=')) {
       const val = this.parseExpression();
-      this.match(';');
+      if (!this.match(';')) this.expect(';');
 
       if (expr.type === 'Identifier') {
         return {
@@ -319,10 +337,12 @@ export class Parser {
           property: mem.property,
           value: val,
         } as MemberAssignmentNode;
+      } else {
+        throw new Error(`Invalid assignment target at line ${expr.line}`);
       }
     }
 
-    this.match(';');
+    if (!this.match(';')) this.expect(';');
     return {
       type: 'ExpressionStatement',
       line: expr.line,
@@ -331,12 +351,26 @@ export class Parser {
   }
 
   public parseExpression(): BaseASTNode {
-    return this.parseBinary(0);
+    let expr = this.parseBinary(0);
+    if (this.match('?')) {
+      const consequent = this.parseExpression();
+      this.expect(':');
+      const alternate = this.parseExpression();
+      return {
+        type: 'ConditionalExpression',
+        line: expr.line,
+        condition: expr,
+        consequent,
+        alternate,
+      } as ConditionalExpressionNode;
+    }
+    return expr;
   }
 
   private parseBinary(minPrec: number): BaseASTNode {
     let left = this.parsePrimary();
 
+    // Standard C++ operator precedence
     const precMap: Record<string, number> = {
       '||': 1,
       '&&': 2,
@@ -346,12 +380,13 @@ export class Parser {
       '>': 4,
       '<=': 4,
       '>=': 4,
-      '+': 5,
-      '-': 5,
-      '*': 6,
-      '/': 6,
-      '<<': 7,
-      '>>': 7,
+      '<<': 5,
+      '>>': 5,
+      '+': 6,
+      '-': 6,
+      '*': 7,
+      '/': 7,
+      '%': 7,
     };
 
     while (this.peek().type === 'OPERATOR' && precMap[this.peek().value] >= minPrec) {
@@ -372,6 +407,18 @@ export class Parser {
 
   private parsePrimary(): BaseASTNode {
     const token = this.peek();
+
+    // Unary operators (!, -, +, ~)
+    if (token.value === '!' || token.value === '~' || token.value === '+' || token.value === '-') {
+      this.advance();
+      const argument = this.parsePrimary();
+      return {
+        type: 'UnaryExpression',
+        line: token.line,
+        operator: token.value,
+        argument,
+      } as UnaryExpressionNode;
+    }
 
     if (token.value === 'new') {
       this.advance();
@@ -468,22 +515,41 @@ export class Parser {
         continue;
       }
 
-      // Function call e.g. invertTree(root)
-      if (this.peek().value === '(' && expr.type === 'Identifier') {
-        this.advance();
-        const args: BaseASTNode[] = [];
-        while (this.peek().type !== 'EOF' && this.peek().value !== ')') {
-          args.push(this.parseExpression());
-          if (this.peek().value === ',') this.advance();
+      // Function or method call e.g. invertTree(root) or q.push(root)
+      if (this.peek().value === '(') {
+        if (expr.type === 'Identifier') {
+          this.advance();
+          const args: BaseASTNode[] = [];
+          while (this.peek().type !== 'EOF' && this.peek().value !== ')') {
+            args.push(this.parseExpression());
+            if (this.peek().value === ',') this.advance();
+          }
+          this.expect(')');
+          expr = {
+            type: 'CallExpression',
+            line: expr.line,
+            callee: (expr as IdentifierNode).name,
+            args,
+          } as CallExpressionNode;
+          continue;
+        } else if (expr.type === 'MemberAccessExpression') {
+          this.advance();
+          const args: BaseASTNode[] = [];
+          while (this.peek().type !== 'EOF' && this.peek().value !== ')') {
+            args.push(this.parseExpression());
+            if (this.peek().value === ',') this.advance();
+          }
+          this.expect(')');
+          const mem = expr as MemberAccessNode;
+          expr = {
+            type: 'MemberCallExpression',
+            line: expr.line,
+            object: mem.object,
+            method: mem.property,
+            args,
+          } as MemberCallExpressionNode;
+          continue;
         }
-        this.expect(')');
-        expr = {
-          type: 'CallExpression',
-          line: expr.line,
-          callee: (expr as IdentifierNode).name,
-          args,
-        } as CallExpressionNode;
-        continue;
       }
 
       break;

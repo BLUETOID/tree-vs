@@ -122,6 +122,7 @@ export function generateTraversalSteps(
 
   // DFS Traversals: Pre-order, In-order, Post-order
   const callStack: CallStackFrame[] = [];
+  const cloneStack = (stack: CallStackFrame[]) => stack.map((f) => ({ ...f, args: { ...f.args } }));
 
   function dfs(nodeId: string | null) {
     if (!nodeId || !currentNodes[nodeId]) {
@@ -146,7 +147,7 @@ export function generateTraversalSteps(
       action: `Call traverse(Node ${val})`,
       explanation: `Pushed call frame for node ${val} to recursive call stack.`,
       auxiliary: {
-        callStack: [...callStack],
+        callStack: cloneStack(callStack),
         traversalOutput: [...traversalOutput],
       },
     });
@@ -163,7 +164,7 @@ export function generateTraversalSteps(
         action: `Pre-order Visit: ${val}`,
         explanation: `Root processed before children. Added ${val} to output.`,
         auxiliary: {
-          callStack: [...callStack],
+          callStack: cloneStack(callStack),
           traversalOutput: [...traversalOutput],
         },
       });
@@ -186,7 +187,7 @@ export function generateTraversalSteps(
         action: `In-order Visit: ${val}`,
         explanation: `Left subtree finished. Processed node ${val}.`,
         auxiliary: {
-          callStack: [...callStack],
+          callStack: cloneStack(callStack),
           traversalOutput: [...traversalOutput],
         },
       });
@@ -209,7 +210,7 @@ export function generateTraversalSteps(
         action: `Post-order Visit: ${val}`,
         explanation: `Both subtrees completed. Processed node ${val}.`,
         auxiliary: {
-          callStack: [...callStack],
+          callStack: cloneStack(callStack),
           traversalOutput: [...traversalOutput],
         },
       });
@@ -217,7 +218,7 @@ export function generateTraversalSteps(
 
     // Unwind call stack
     const popped = callStack.pop();
-    if (popped) popped.status = 'returning';
+    const unwindingFrame = popped ? { ...popped, status: 'returning' as const } : null;
 
     steps.push({
       stepIndex: stepCounter++,
@@ -227,7 +228,7 @@ export function generateTraversalSteps(
       action: `Return from traverse(Node ${val})`,
       explanation: `Frame unwound. Returning execution control to caller.`,
       auxiliary: {
-        callStack: [...callStack],
+        callStack: unwindingFrame ? [...cloneStack(callStack), unwindingFrame] : cloneStack(callStack),
         traversalOutput: [...traversalOutput],
       },
     });

@@ -54,6 +54,8 @@ export const App: React.FC = () => {
   const isDraggingSplitterRef = useRef<boolean>(false);
   const isDraggingConsoleRef = useRef<boolean>(false);
 
+  const [runId, setRunId] = useState<number>(1);
+
   // Execute C++ Interpreter
   const executeTrace = useCallback((sourceCode: string) => {
     setIsPlaying(false);
@@ -61,18 +63,21 @@ export const App: React.FC = () => {
     setTrace(result.trace);
     setRuntimeError(result.error);
     setCurrentIndex(0);
+    setRunId((prev) => prev + 1);
   }, []);
 
-  // Run on initial mount and when preset changes
+  // Run on initial mount
   useEffect(() => {
     executeTrace(code);
-  }, [code, executeTrace]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSelectPreset = (presetId: string) => {
     const preset = PRESET_PROGRAMS.find((p) => p.id === presetId);
     if (preset) {
       setSelectedPresetId(presetId);
       setCode(preset.code);
+      executeTrace(preset.code);
     }
   };
 
@@ -329,6 +334,7 @@ export const App: React.FC = () => {
                 layout={layout}
                 pointers={treeSnapshot.pointers}
                 activeNodeId={activeNodeId}
+                resetCameraTrigger={runId}
               />
             ) : (
               <CallStackPanel

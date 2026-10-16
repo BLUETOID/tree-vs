@@ -71,7 +71,10 @@ export function tokenize(source: string): Token[] {
 
     // Block comment
     if (ch === '/' && source[i + 1] === '*') {
+      const commentLine = line;
+      const commentCol = col;
       i += 2;
+      col += 2;
       while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) {
         if (source[i] === '\n') {
           line++;
@@ -81,7 +84,11 @@ export function tokenize(source: string): Token[] {
         }
         i++;
       }
+      if (i >= source.length) {
+        throw new Error(`Unterminated block comment starting at line ${commentLine}, col ${commentCol}`);
+      }
       i += 2;
+      col += 2;
       continue;
     }
 
@@ -97,7 +104,14 @@ export function tokenize(source: string): Token[] {
     if (/\d/.test(ch)) {
       const startCol = col;
       let numStr = '';
+      let dotCount = 0;
       while (i < source.length && /[\d.]/.test(source[i])) {
+        if (source[i] === '.') {
+          dotCount++;
+          if (dotCount > 1) {
+            throw new Error(`Invalid numeric literal with multiple decimal points at line ${line}, col ${col}`);
+          }
+        }
         numStr += source[i];
         i++;
         col++;
@@ -110,12 +124,25 @@ export function tokenize(source: string): Token[] {
     if (ch === '"' || ch === "'") {
       const quote = ch;
       const startCol = col;
+      const startLine = line;
       let strVal = '';
       i++;
       col++;
       while (i < source.length && source[i] !== quote) {
+        if (source[i] === '\n') {
+          line++;
+          col = 1;
+        }
         if (source[i] === '\\' && i + 1 < source.length) {
-          strVal += source[i + 1];
+          const esc = source[i + 1];
+          if (esc === 'n') strVal += '\n';
+          else if (esc === 't') strVal += '\t';
+          else if (esc === 'r') strVal += '\r';
+          else if (esc === '\\') strVal += '\\';
+          else if (esc === '"') strVal += '"';
+          else if (esc === "'") strVal += "'";
+          else if (esc === '0') strVal += '\0';
+          else strVal += esc;
           i += 2;
           col += 2;
         } else {
@@ -124,11 +151,12 @@ export function tokenize(source: string): Token[] {
           col++;
         }
       }
-      if (i < source.length && source[i] === quote) {
-        i++;
-        col++;
+      if (i >= source.length || source[i] !== quote) {
+        throw new Error(`Unterminated string literal starting at line ${startLine}, col ${startCol}`);
       }
-      tokens.push({ type: 'STRING', value: strVal, line, col: startCol });
+      i++;
+      col++;
+      tokens.push({ type: 'STRING', value: strVal, line: startLine, col: startCol });
       continue;
     }
 
@@ -171,8 +199,7 @@ export function tokenize(source: string): Token[] {
     }
 
     // Other unexpected character
-    i++;
-    col++;
+    throw new Error(`Unexpected character '${ch}' at line ${line}, col ${col}`);
   }
 
   tokens.push({ type: 'EOF', value: '', line, col });

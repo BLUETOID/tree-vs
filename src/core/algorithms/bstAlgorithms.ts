@@ -192,6 +192,11 @@ export function generateBstSearchSteps(
 /**
  * Generates step-by-step BST Insert animation timeline
  */
+let bstNodeIdCounter = 1;
+export function resetBstNodeIdCounter() {
+  bstNodeIdCounter = 1;
+}
+
 export function generateBstInsertSteps(
   initialNodes: Record<string, TreeNodeData>,
   rootId: string | null,
@@ -201,7 +206,12 @@ export function generateBstInsertSteps(
   let currentNodes = cloneNodes(initialNodes);
   let stepCounter = 0;
 
-  const newId = `node_${Date.now() % 100000}`;
+  // Find next available unique ID avoiding collisions
+  let nextNum = bstNodeIdCounter++;
+  while (currentNodes[`node_${nextNum}`]) {
+    nextNum = bstNodeIdCounter++;
+  }
+  const newId = `node_${nextNum}`;
 
   if (!rootId || !currentNodes[rootId]) {
     currentNodes[newId] = {
@@ -465,6 +475,8 @@ export function generateBstDeleteSteps(
       if (currentNodes[parentId].left === currId) currentNodes[parentId].left = childId;
       else if (currentNodes[parentId].right === currId) currentNodes[parentId].right = childId;
       if (childId && currentNodes[childId]) currentNodes[childId].parent = parentId;
+    } else {
+      if (childId && currentNodes[childId]) currentNodes[childId].parent = null;
     }
     delete currentNodes[currId];
     const newRootId = currId === rootId ? childId : rootId;

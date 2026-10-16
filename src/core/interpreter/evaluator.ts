@@ -2,9 +2,35 @@
  * C++ Step-by-Step AST Evaluator & Memory Simulator
  */
 
-import type { ProgramNode, BaseASTNode, FunctionDeclNode } from './ast';
+import type {
+  ProgramNode,
+  BaseASTNode,
+  FunctionDeclNode,
+  VariableDeclNode,
+  AssignmentNode,
+  MemberAssignmentNode,
+  IfStatementNode,
+  WhileStatementNode,
+  ReturnStatementNode,
+  BlockStatementNode,
+  ExpressionStatementNode,
+  BinaryExpressionNode,
+  UnaryExpressionNode,
+  CallExpressionNode,
+  MemberCallExpressionNode,
+  MemberAccessNode,
+  ConditionalExpressionNode,
+  NewExpressionNode,
+  IdentifierNode,
+  LiteralNode,
+} from './ast';
 import type { TraceEvent, InterpreterResult } from '../../types/interpreter';
 import type { TreeNodeData, TreeStepSnapshot, PointerMarker } from '../../types/tree';
+
+interface QueueObject {
+  __type: 'queue';
+  items: any[];
+}
 
 interface Frame {
   name: string;
@@ -14,27 +40,27 @@ interface Frame {
 }
 
 export class Evaluator {
-  private functions: Record<string, FunctionDeclNode> = {};
-  private heap: Record<string, TreeNodeData> = {};
+  private functions: Map<string, FunctionDeclNode> = new Map();
+  private heap: Map<string, TreeNodeData> = new Map();
   private heapCounter: number = 0;
   private callStack: Frame[] = [];
   private trace: TraceEvent[] = [];
   private stdout: string = '';
-  private maxSteps: number = 1000;
+  private maxSteps: number = 5000;
   private stepCount: number = 0;
 
   constructor(ast: ProgramNode) {
     for (const stmt of ast.body) {
       if (stmt.type === 'FunctionDeclaration') {
         const fn = stmt as FunctionDeclNode;
-        this.functions[fn.name] = fn;
+        this.functions.set(fn.name, fn);
       }
     }
   }
 
   public run(): InterpreterResult {
     try {
-      const mainFn = this.functions['main'];
+      const mainFn = this.functions.get('main');
       if (!mainFn) {
         return {
           trace: [],
@@ -64,24 +90,17 @@ export class Evaluator {
     }
 
     const currentFrame = this.callStack[this.callStack.length - 1];
+    const mainFrame = this.callStack[0];
 
     // Find active pointer markers from current frame variables
     const pointers: PointerMarker[] = [];
-
-    // Find TRUE tree root: the node with no parent, or first allocated
-    let rootId: string | null = null;
-    const trueRoots = Object.keys(this.heap).filter((id) => !this.heap[id].parent);
-    if (trueRoots.length > 0) {
-      rootId = trueRoots[0];
-    } else if (Object.keys(this.heap).length > 0) {
-      rootId = Object.keys(this.heap)[0];
-    }
-
     let activeNodeId: string | null = null;
+    let queueState: any[] = [];
+
     if (currentFrame) {
       const allVars = { ...currentFrame.args, ...currentFrame.locals };
       for (const [varName, val] of Object.entries(allVars)) {
-        if (typeof val === 'string' && this.heap[val]) {
+        if (typeof val === 'string' && this.heap.has(val)) {
           let color = '#06b6d4';
           if (varName === 'root') {
             color = '#06b6d4';
@@ -98,16 +117,87 @@ export class Evaluator {
           }
 
           pointers.push({ name: varName, nodeId: val, color });
+        } else if (val && typeof val === 'object' && val.__type === 'queue') {
+          queueState = val.items.map((item: any) =>
+            typeof item === 'string' && this.heap.has(item) ? this.heap.get(item)!.val : item
+          );
         }
       }
     }
 
-    // Deep copy heap for snapshot and apply active state
+    // Determine AUTHORITATIVE ROOT:
+    // 1. Candidate root from currentFrame or mainFrame `root` variable
+    let candidateRootId: string | null = null;
+    if (currentFrame && typeof currentFrame.locals['root'] === 'string' && this.heap.has(currentFrame.locals['root'])) {
+      candidateRootId = currentFrame.locals['root'];
+    } else if (currentFrame && typeof currentFrame.args['root'] === 'string' && this.heap.has(currentFrame.args['root'])) {
+      candidateRootId = currentFrame.args['root'];
+    } else if (mainFrame && typeof mainFrame.locals['root'] === 'string' && this.heap.has(mainFrame.locals['root'])) {
+      candidateRootId = mainFrame.locals['root'];
+    }
+
+    // 2. Count incoming pointer edges for each node in heap
+    const incomingCount: Map<string, number> = new Map();
+    for (const [id] of this.heap) {
+      incomingCount.set(id, 0);
+    }
+    for (const [, node] of this.heap) {
+      if (node.left && this.heap.has(node.left)) {
+        incomingCount.set(node.left, (incomingCount.get(node.left) || 0) + 1);
+      }
+      if (node.right && this.heap.has(node.right)) {
+        incomingCount.set(node.right, (incomingCount.get(node.right) || 0) + 1);
+      }
+    }
+
+    // 3. Candidate roots with zero incoming edges
+    const zeroIncomingNodes: string[] = [];
+    for (const [id, count] of incomingCount) {
+      if (count === 0) zeroIncomingNodes.push(id);
+    }
+
+    let rootId: string | null = null;
+    if (candidateRootId && this.heap.has(candidateRootId)) {
+      rootId = candidateRootId;
+    } else if (zeroIncomingNodes.length > 0) {
+      rootId = zeroIncomingNodes[0];
+    } else if (this.heap.size > 0) {
+      rootId = this.heap.keys().next().value || null;
+    }
+
+    // Deep copy heap for snapshot and derive clean parent pointers without cycles
     const heapSnapshot: Record<string, TreeNodeData> = {};
-    for (const [id, node] of Object.entries(this.heap)) {
-      heapSnapshot[id] = { ...node };
+    for (const [id, node] of this.heap) {
+      heapSnapshot[id] = {
+        ...node,
+        parent: null,
+      };
       if (id === activeNodeId) {
         heapSnapshot[id].state = explanation.startsWith('cout') ? 'found' : 'active';
+      }
+    }
+
+    // Traverse authoritative tree starting from rootId to assign tree parents
+    if (rootId && heapSnapshot[rootId]) {
+      const visited = new Set<string>();
+      const queue = [rootId];
+      visited.add(rootId);
+
+      while (queue.length > 0) {
+        const u = queue.shift()!;
+        const curr = heapSnapshot[u];
+        if (!curr) continue;
+
+        if (curr.left && heapSnapshot[curr.left] && !visited.has(curr.left)) {
+          heapSnapshot[curr.left].parent = u;
+          visited.add(curr.left);
+          queue.push(curr.left);
+        }
+        if (curr.right && heapSnapshot[curr.right] && !visited.has(curr.right)) {
+          heapSnapshot[curr.right].parent = u;
+          visited.add(curr.right);
+          queue.push(curr.right);
+        }
       }
     }
 
@@ -123,8 +213,8 @@ export class Evaluator {
         callStack: this.callStack.map((f, idx) => {
           const formattedArgs: Record<string, any> = {};
           for (const [k, v] of Object.entries(f.args)) {
-            if (typeof v === 'string' && this.heap[v]) {
-              formattedArgs[k] = this.heap[v].val;
+            if (typeof v === 'string' && this.heap.has(v)) {
+              formattedArgs[k] = this.heap.get(v)!.val;
             } else {
               formattedArgs[k] = v;
             }
@@ -136,6 +226,7 @@ export class Evaluator {
             status: 'active',
           };
         }),
+        queue: queueState.length > 0 ? queueState : undefined,
       },
     };
 
@@ -145,8 +236,8 @@ export class Evaluator {
       callStack: this.callStack.map((f) => {
         const formattedArgs: Record<string, any> = {};
         for (const [k, v] of Object.entries(f.args)) {
-          if (typeof v === 'string' && this.heap[v]) {
-            formattedArgs[k] = this.heap[v].val;
+          if (typeof v === 'string' && this.heap.has(v)) {
+            formattedArgs[k] = this.heap.get(v)!.val;
           } else {
             formattedArgs[k] = v;
           }
@@ -165,12 +256,12 @@ export class Evaluator {
   }
 
   private callFunction(name: string, argValues: any[]): any {
-    const fn = this.functions[name];
+    const fn = this.functions.get(name);
     if (!fn) {
       throw new Error(`Function '${name}' is not defined.`);
     }
 
-    const args: Record<string, any> = {};
+    const args: Record<string, any> = Object.create(null);
     fn.params.forEach((param, idx) => {
       args[param.name] = argValues[idx];
     });
@@ -178,7 +269,7 @@ export class Evaluator {
     const frame: Frame = {
       name,
       args,
-      locals: {},
+      locals: Object.create(null),
       line: fn.line,
     };
 
@@ -195,11 +286,11 @@ export class Evaluator {
       }
     }
 
-    this.callStack.pop();
     this.recordStep(
       fn.line,
       `Returned from ${name}() ${returnValue !== undefined ? `with value ${returnValue}` : ''}`
     );
+    this.callStack.pop();
 
     return returnValue;
   }
@@ -208,23 +299,31 @@ export class Evaluator {
     const frame = this.callStack[this.callStack.length - 1];
 
     switch (stmt.type) {
+      case 'EmptyStatement':
+        return;
+
       case 'VariableDeclaration': {
-        const decl = stmt as any;
+        const decl = stmt as VariableDeclNode;
         let val: any = undefined;
-        if (decl.initializer) {
+        if (decl.varType.startsWith('queue')) {
+          val = { __type: 'queue', items: [] } as QueueObject;
+        } else if (decl.initializer) {
           val = this.evaluateExpression(decl.initializer);
         }
         frame.locals[decl.name] = val;
-        this.recordStep(stmt.line, `Declared variable ${decl.name} = ${val}`);
+        this.recordStep(
+          stmt.line,
+          `Declared variable ${decl.name}${val !== undefined ? ` = ${typeof val === 'object' && val?.__type === 'queue' ? 'queue<>' : val}` : ''}`
+        );
         return;
       }
 
       case 'AssignmentStatement': {
-        const assign = stmt as any;
+        const assign = stmt as AssignmentNode;
         const val = this.evaluateExpression(assign.value);
-        if (frame.locals[assign.target] !== undefined) {
+        if (frame.locals[assign.target] !== undefined || Object.prototype.hasOwnProperty.call(frame.locals, assign.target)) {
           frame.locals[assign.target] = val;
-        } else if (frame.args[assign.target] !== undefined) {
+        } else if (frame.args[assign.target] !== undefined || Object.prototype.hasOwnProperty.call(frame.args, assign.target)) {
           frame.args[assign.target] = val;
         } else {
           frame.locals[assign.target] = val;
@@ -234,29 +333,44 @@ export class Evaluator {
       }
 
       case 'MemberAssignmentStatement': {
-        const memAssign = stmt as any;
+        const memAssign = stmt as MemberAssignmentNode;
         const objVal = this.evaluateExpression(memAssign.object);
         const val = this.evaluateExpression(memAssign.value);
 
-        if (typeof objVal === 'string' && this.heap[objVal]) {
-          const prop = memAssign.property;
-          (this.heap[objVal] as any)[prop] = val;
+        if (objVal === null || objVal === undefined) {
+          throw new Error(`Null pointer dereference at line ${stmt.line} (cannot assign to '->${memAssign.property}')`);
+        }
 
-          // If updating left or right, set child parent pointer
-          if ((prop === 'left' || prop === 'right') && typeof val === 'string' && this.heap[val]) {
-            this.heap[val].parent = objVal;
+        const prop = memAssign.property;
+        // P0 Security: Disallow prototype pollution keys
+        if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') {
+          throw new Error(`Security violation: attempted mutation of restricted property '${prop}' at line ${stmt.line}`);
+        }
+
+        if (typeof objVal === 'string' && this.heap.has(objVal)) {
+          const node = this.heap.get(objVal)!;
+          if (prop === 'val') {
+            node.val = val;
+          } else if (prop === 'left') {
+            node.left = val;
+          } else if (prop === 'right') {
+            node.right = val;
+          } else {
+            throw new Error(`Invalid member '${prop}' on TreeNode at line ${stmt.line}`);
           }
 
           this.recordStep(
             stmt.line,
-            `Assigned node ${this.heap[objVal]?.val}->${prop} = ${typeof val === 'string' && this.heap[val] ? `Node(${this.heap[val].val})` : val}`
+            `Assigned node ${node.val}->${prop} = ${typeof val === 'string' && this.heap.has(val) ? `Node(${this.heap.get(val)!.val})` : val}`
           );
+        } else {
+          throw new Error(`Invalid member assignment on non-heap object at line ${stmt.line}`);
         }
         return;
       }
 
       case 'IfStatement': {
-        const ifStmt = stmt as any;
+        const ifStmt = stmt as IfStatementNode;
         const cond = this.evaluateExpression(ifStmt.condition);
         this.recordStep(stmt.line, `Evaluated condition (${cond})`);
 
@@ -269,9 +383,9 @@ export class Evaluator {
       }
 
       case 'WhileStatement': {
-        const whileStmt = stmt as any;
+        const whileStmt = stmt as WhileStatementNode;
         while (this.evaluateExpression(whileStmt.condition)) {
-          this.recordStep(stmt.line, `Loop iteration start`);
+          this.recordStep(stmt.line, `Loop condition true, executing iteration`);
           const res = this.executeStatement(whileStmt.body);
           if (res && res.__return__) return res;
         }
@@ -279,17 +393,17 @@ export class Evaluator {
       }
 
       case 'ReturnStatement': {
-        const retStmt = stmt as any;
+        const retStmt = stmt as ReturnStatementNode;
         let value: any = undefined;
         if (retStmt.argument) {
           value = this.evaluateExpression(retStmt.argument);
         }
-        this.recordStep(stmt.line, `Return statement encountered: ${value}`);
+        this.recordStep(stmt.line, `Return statement: ${value}`);
         return { __return__: true, value };
       }
 
       case 'BlockStatement': {
-        const block = stmt as any;
+        const block = stmt as BlockStatementNode;
         for (const s of block.body) {
           const res = this.executeStatement(s);
           if (res && res.__return__) return res;
@@ -298,7 +412,7 @@ export class Evaluator {
       }
 
       case 'ExpressionStatement': {
-        const exprStmt = stmt as any;
+        const exprStmt = stmt as ExpressionStatementNode;
         this.evaluateExpression(exprStmt.expression);
         return;
       }
@@ -310,32 +424,81 @@ export class Evaluator {
 
     switch (expr.type) {
       case 'Literal':
-        return (expr as any).value;
+        return (expr as LiteralNode).value;
 
       case 'Identifier': {
-        const id = (expr as any).name;
+        const id = (expr as IdentifierNode).name;
         if (id === 'nullptr' || id === 'NULL') return null;
         if (id === 'true') return true;
         if (id === 'false') return false;
+        if (id === 'endl') return 'endl';
+        if (id === 'cout') return 'cout';
 
-        if (frame.locals[id] !== undefined) return frame.locals[id];
-        if (frame.args[id] !== undefined) return frame.args[id];
-        return undefined;
+        // P0: Safe check against frame.locals and frame.args without prototype pollution
+        if (frame) {
+          if (Object.prototype.hasOwnProperty.call(frame.locals, id)) {
+            return frame.locals[id];
+          }
+          if (Object.prototype.hasOwnProperty.call(frame.args, id)) {
+            return frame.args[id];
+          }
+        }
+
+        // Global / Builtin functions
+        if (this.functions.has(id)) return id;
+
+        throw new Error(`Runtime error: Undefined identifier '${id}' at line ${expr.line}`);
+      }
+
+      case 'UnaryExpression': {
+        const unary = expr as UnaryExpressionNode;
+        const argVal = this.evaluateExpression(unary.argument);
+        switch (unary.operator) {
+          case '!':
+            return !argVal;
+          case '-':
+            return -argVal;
+          case '+':
+            return +argVal;
+          case '~':
+            return ~argVal;
+          default:
+            throw new Error(`Unsupported unary operator '${unary.operator}' at line ${expr.line}`);
+        }
       }
 
       case 'BinaryExpression': {
-        const bin = expr as any;
+        const bin = expr as BinaryExpressionNode;
 
         // cout << value
         if (bin.operator === '<<') {
-          const isLeftDirectCout = bin.left.type === 'Identifier' && bin.left.name === 'cout';
-          const leftVal = isLeftDirectCout ? 'cout' : this.evaluateExpression(bin.left);
+          const leftVal = this.evaluateExpression(bin.left);
           if (leftVal === 'cout') {
-            const val = this.evaluateExpression(bin.right);
-            this.stdout += String(val === 'endl' ? '\n' : val);
-            this.recordStep(expr.line, `cout << ${val}`);
+            const rightVal = this.evaluateExpression(bin.right);
+            if (rightVal === 'endl') {
+              this.stdout += '\n';
+              this.recordStep(expr.line, `cout << endl`);
+            } else {
+              this.stdout += String(rightVal);
+              this.recordStep(expr.line, `cout << ${rightVal}`);
+            }
             return 'cout';
           }
+        }
+
+        // I-03: Logical short-circuiting
+        if (bin.operator === '&&') {
+          const leftVal = this.evaluateExpression(bin.left);
+          if (!leftVal) return false;
+          const rightVal = this.evaluateExpression(bin.right);
+          return Boolean(rightVal);
+        }
+
+        if (bin.operator === '||') {
+          const leftVal = this.evaluateExpression(bin.left);
+          if (leftVal) return true;
+          const rightVal = this.evaluateExpression(bin.right);
+          return Boolean(rightVal);
         }
 
         const leftVal = this.evaluateExpression(bin.left);
@@ -349,7 +512,15 @@ export class Evaluator {
           case '*':
             return leftVal * rightVal;
           case '/':
-            return Math.floor(leftVal / rightVal);
+            if (rightVal === 0) {
+              throw new Error(`Runtime error: Division by zero at line ${expr.line}`);
+            }
+            return Math.trunc(leftVal / rightVal);
+          case '%':
+            if (rightVal === 0) {
+              throw new Error(`Runtime error: Modulo by zero at line ${expr.line}`);
+            }
+            return leftVal % rightVal;
           case '==':
             return leftVal === rightVal;
           case '!=':
@@ -362,41 +533,91 @@ export class Evaluator {
             return leftVal <= rightVal;
           case '>=':
             return leftVal >= rightVal;
-          case '&&':
-            return Boolean(leftVal && rightVal);
-          case '||':
-            return Boolean(leftVal || rightVal);
         }
-        return undefined;
+        throw new Error(`Unsupported binary operator '${bin.operator}' at line ${expr.line}`);
       }
 
       case 'MemberAccessExpression': {
-        const mem = expr as any;
+        const mem = expr as MemberAccessNode;
         const obj = this.evaluateExpression(mem.object);
-        if (typeof obj === 'string' && this.heap[obj]) {
-          return (this.heap[obj] as any)[mem.property];
+        if (obj === null || obj === undefined) {
+          throw new Error(
+            `Runtime error: Null pointer dereference at line ${expr.line} (attempted to access '->${mem.property}' on null)`
+          );
         }
-        return undefined;
+
+        // P0: Disallow prototype keys
+        if (mem.property === '__proto__' || mem.property === 'constructor' || mem.property === 'prototype') {
+          throw new Error(
+            `Security violation: attempted access of restricted property '${mem.property}' at line ${expr.line}`
+          );
+        }
+
+        if (typeof obj === 'string' && this.heap.has(obj)) {
+          const node = this.heap.get(obj)!;
+          if (mem.property === 'val') return node.val;
+          if (mem.property === 'left') return node.left;
+          if (mem.property === 'right') return node.right;
+          throw new Error(`Runtime error: TreeNode has no member '${mem.property}' at line ${expr.line}`);
+        }
+        throw new Error(`Runtime error: Cannot access member '${mem.property}' on non-heap object at line ${expr.line}`);
+      }
+
+      case 'MemberCallExpression': {
+        const memCall = expr as MemberCallExpressionNode;
+        const obj = this.evaluateExpression(memCall.object);
+        const args = memCall.args.map((a) => this.evaluateExpression(a));
+
+        if (obj && typeof obj === 'object' && obj.__type === 'queue') {
+          const q = obj as QueueObject;
+          if (memCall.method === 'push') {
+            q.items.push(args[0]);
+            const valDisplay =
+              typeof args[0] === 'string' && this.heap.has(args[0]) ? this.heap.get(args[0])!.val : args[0];
+            this.recordStep(expr.line, `q.push(${valDisplay})`);
+            return;
+          }
+          if (memCall.method === 'pop') {
+            const popped = q.items.shift();
+            const valDisplay =
+              typeof popped === 'string' && this.heap.has(popped) ? this.heap.get(popped)!.val : popped;
+            this.recordStep(expr.line, `q.pop() -> removed ${valDisplay}`);
+            return;
+          }
+          if (memCall.method === 'front') {
+            if (q.items.length === 0) {
+              throw new Error(`Runtime error: q.front() called on empty queue at line ${expr.line}`);
+            }
+            return q.items[0];
+          }
+          if (memCall.method === 'empty') {
+            return q.items.length === 0;
+          }
+          if (memCall.method === 'size') {
+            return q.items.length;
+          }
+        }
+        throw new Error(`Runtime error: Method '${memCall.method}' not supported on object at line ${expr.line}`);
       }
 
       case 'NewExpression': {
-        const newExpr = expr as any;
+        const newExpr = expr as NewExpressionNode;
         const valArg = newExpr.args[0] ? this.evaluateExpression(newExpr.args[0]) : 0;
         const id = `n${this.heapCounter++}`;
-        this.heap[id] = {
+        this.heap.set(id, {
           id,
           val: valArg,
           left: null,
           right: null,
           parent: null,
           state: 'default',
-        };
+        });
         this.recordStep(expr.line, `new TreeNode(${valArg}) allocated at &${id}`);
         return id;
       }
 
       case 'CallExpression': {
-        const call = expr as any;
+        const call = expr as CallExpressionNode;
         const argValues = call.args.map((a: BaseASTNode) => this.evaluateExpression(a));
 
         if (call.callee === 'max') {
@@ -407,6 +628,14 @@ export class Evaluator {
         }
 
         return this.callFunction(call.callee, argValues);
+      }
+
+      case 'ConditionalExpression': {
+        const condExpr = expr as ConditionalExpressionNode;
+        const condVal = this.evaluateExpression(condExpr.condition);
+        return condVal
+          ? this.evaluateExpression(condExpr.consequent)
+          : this.evaluateExpression(condExpr.alternate);
       }
     }
   }

@@ -25,6 +25,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 }) => {
   const editorRef = useRef<MonacoEditorType.IStandaloneCodeEditor | null>(null);
   const decorationsRef = useRef<string[]>([]);
+  const onExecuteRef = useRef<() => void>(onExecute);
+
+  useEffect(() => {
+    onExecuteRef.current = onExecute;
+  }, [onExecute]);
 
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -56,15 +61,20 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
     monaco.editor.setTheme('treeDark');
 
-    // Ctrl+Enter / Cmd+Enter hotkey to run
+    // Ctrl+Enter / Cmd+Enter hotkey to run with fresh callback ref
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-      onExecute();
+      onExecuteRef.current();
     });
   };
 
   useEffect(() => {
-    if (!editorRef.current || !activeLine) return;
+    if (!editorRef.current) return;
     const editor = editorRef.current;
+
+    if (!activeLine) {
+      decorationsRef.current = editor.deltaDecorations(decorationsRef.current, []);
+      return;
+    }
 
     const newDecorations = [
       {

@@ -16,6 +16,7 @@ interface CanvasViewportProps {
   pointers?: PointerMarker[];
   activeNodeId?: string;
   onSelectNode?: (nodeId: string) => void;
+  resetCameraTrigger?: number | string;
 }
 
 export const CanvasViewport: React.FC<CanvasViewportProps> = ({
@@ -23,12 +24,14 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   pointers = [],
   activeNodeId,
   onSelectNode,
+  resetCameraTrigger,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [zoom, setZoom] = useState<number>(1);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const hasInitialFitRef = useRef<boolean>(false);
 
   // Center & Fit to Screen
   const fitToView = useCallback(() => {
@@ -63,10 +66,19 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     });
   }, [activeNodeId, layout.nodes, zoom]);
 
-  // Auto-fit on initial mount or when node tree changes
+  // Only auto-fit on explicit resetCameraTrigger or initial node appearance
   useEffect(() => {
-    fitToView();
-  }, [fitToView]);
+    if (resetCameraTrigger !== undefined) {
+      fitToView();
+    }
+  }, [resetCameraTrigger, fitToView]);
+
+  useEffect(() => {
+    if (!hasInitialFitRef.current && layout.nodes.length > 0) {
+      hasInitialFitRef.current = true;
+      fitToView();
+    }
+  }, [layout.nodes.length, fitToView]);
 
   // Mouse Pan Handlers
   const handleMouseDown = (e: React.MouseEvent) => {
