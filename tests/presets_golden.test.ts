@@ -94,4 +94,39 @@ describe('Bundled Preset Integration & Invariant Tests', () => {
     expect(result.error).toBeUndefined();
     expect(result.stdout).toBe('1 2 3 4 5 6 ');
   });
+
+  it('10. validate-bst: correctly validates binary search tree bounds', () => {
+    const preset = PRESET_PROGRAMS.find((p) => p.id === 'validate-bst')!;
+    const result = runCppTreeInterpreter(preset.code);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('Valid BST');
+  });
+
+  it('11. lowest-common-ancestor: finds split ancestor for nodes 6 and 2', () => {
+    const preset = PRESET_PROGRAMS.find((p) => p.id === 'lowest-common-ancestor')!;
+    const result = runCppTreeInterpreter(preset.code);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('LCA: 5');
+  });
+
+  it('12. diameter-of-tree: computes longest node-to-node path across subtrees', () => {
+    const preset = PRESET_PROGRAMS.find((p) => p.id === 'diameter-of-tree')!;
+    const result = runCppTreeInterpreter(preset.code);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('Diameter: 3');
+  });
+
+  it('13. symmetric-tree: verifies mirror symmetry of dual subtrees', () => {
+    const preset = PRESET_PROGRAMS.find((p) => p.id === 'symmetric-tree')!;
+    const result = runCppTreeInterpreter(preset.code);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('Tree is Symmetric');
+  });
+
+  it('14. path-sum: identifies root-to-leaf path summing to target', () => {
+    const preset = PRESET_PROGRAMS.find((p) => p.id === 'path-sum')!;
+    const result = runCppTreeInterpreter(preset.code);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('Path found for sum 22');
+  });
 });

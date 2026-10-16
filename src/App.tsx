@@ -335,6 +335,9 @@ export const App: React.FC = () => {
                 pointers={treeSnapshot.pointers}
                 activeNodeId={activeNodeId}
                 resetCameraTrigger={runId}
+                breadcrumbs={treeSnapshot.auxiliary?.breadcrumbs}
+                recursionDepth={treeSnapshot.auxiliary?.recursionDepth}
+                rawNodes={treeSnapshot.nodes}
               />
             ) : (
               <CallStackPanel

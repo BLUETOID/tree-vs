@@ -381,4 +381,216 @@ int main() {
 }
 `,
   },
+
+  // ------------------------------------------------------------------------
+  // 4. LeetCode & Competitive Programming (Classic Algorithms)
+  // ------------------------------------------------------------------------
+  {
+    id: 'validate-bst',
+    name: '10. Validate Binary Search Tree (LC 98)',
+    category: 'LeetCode & Competitive Programming',
+    description: 'Validates that every subtree satisfies minVal < root->val < maxVal.',
+    explanation: 'Uses strict range constraints: traverses left updating maxVal, and right updating minVal.',
+    code: `#include <iostream>
+using namespace std;
+
+struct TreeNode {
+    int val;
+    TreeNode* left;
+    TreeNode* right;
+};
+
+bool isValidBST(TreeNode* root, long minVal, long maxVal) {
+    if (root == nullptr) return true;
+    if (root->val <= minVal || root->val >= maxVal) return false;
+    return isValidBST(root->left, minVal, root->val) && 
+           isValidBST(root->right, root->val, maxVal);
+}
+
+int main() {
+    TreeNode* root = new TreeNode(5);
+    root->left = new TreeNode(1);
+    root->right = new TreeNode(7);
+    root->right->left = new TreeNode(6);
+    root->right->right = new TreeNode(8);
+
+    bool valid = isValidBST(root, -1000, 1000);
+    if (valid) {
+        cout << "Valid BST" << endl;
+    } else {
+        cout << "Invalid BST" << endl;
+    }
+}
+`,
+  },
+  {
+    id: 'lowest-common-ancestor',
+    name: '11. Lowest Common Ancestor (LC 236)',
+    category: 'LeetCode & Competitive Programming',
+    description: 'Finds the lowest node in T that has both p and q as descendants.',
+    explanation: 'Post-order divide and conquer: if left and right both return non-null, current node is the LCA split point.',
+    code: `#include <iostream>
+using namespace std;
+
+struct TreeNode {
+    int val;
+    TreeNode* left;
+    TreeNode* right;
+};
+
+TreeNode* lowestCommonAncestor(TreeNode* root, int p, int q) {
+    if (root == nullptr || root->val == p || root->val == q) {
+        return root;
+    }
+    TreeNode* left = lowestCommonAncestor(root->left, p, q);
+    TreeNode* right = lowestCommonAncestor(root->right, p, q);
+
+    if (left != nullptr && right != nullptr) return root;
+    return (left != nullptr) ? left : right;
+}
+
+int main() {
+    TreeNode* root = new TreeNode(3);
+    root->left = new TreeNode(5);
+    root->right = new TreeNode(1);
+    root->left->left = new TreeNode(6);
+    root->left->right = new TreeNode(2);
+    root->right->left = new TreeNode(0);
+    root->right->right = new TreeNode(8);
+
+    TreeNode* lca = lowestCommonAncestor(root, 6, 2);
+    if (lca != nullptr) {
+        cout << "LCA: " << lca->val << endl;
+    }
+}
+`,
+  },
+  {
+    id: 'diameter-of-tree',
+    name: '12. Diameter of Binary Tree (LC 543)',
+    category: 'LeetCode & Competitive Programming',
+    description: 'Calculates the length of the longest path between any two nodes in a tree.',
+    explanation: 'Computes subtree depth bottom-up and tracks global maximum diameter (leftH + rightH).',
+    code: `#include <iostream>
+using namespace std;
+
+struct TreeNode {
+    int val;
+    TreeNode* left;
+    TreeNode* right;
+};
+
+int maxDia = 0;
+
+int calculateDepth(TreeNode* root) {
+    if (root == nullptr) return 0;
+    int leftH = calculateDepth(root->left);
+    int rightH = calculateDepth(root->right);
+
+    if (leftH + rightH > maxDia) {
+        maxDia = leftH + rightH;
+    }
+    return 1 + max(leftH, rightH);
+}
+
+int main() {
+    TreeNode* root = new TreeNode(1);
+    root->left = new TreeNode(2);
+    root->right = new TreeNode(3);
+    root->left->left = new TreeNode(4);
+    root->left->right = new TreeNode(5);
+
+    calculateDepth(root);
+    cout << "Diameter: " << maxDia << endl;
+}
+`,
+  },
+  {
+    id: 'symmetric-tree',
+    name: '13. Symmetric / Mirror Tree (LC 101)',
+    category: 'LeetCode & Competitive Programming',
+    description: 'Checks whether a binary tree is a mirror of itself around the center.',
+    explanation: 'Uses dual simultaneous recursion to verify t1->left matches t2->right and t1->right matches t2->left.',
+    code: `#include <iostream>
+using namespace std;
+
+struct TreeNode {
+    int val;
+    TreeNode* left;
+    TreeNode* right;
+};
+
+bool isMirror(TreeNode* t1, TreeNode* t2) {
+    if (t1 == nullptr && t2 == nullptr) return true;
+    if (t1 == nullptr || t2 == nullptr) return false;
+    if (t1->val != t2->val) return false;
+    return isMirror(t1->left, t2->right) && isMirror(t1->right, t2->left);
+}
+
+bool isSymmetric(TreeNode* root) {
+    if (root == nullptr) return true;
+    return isMirror(root->left, root->right);
+}
+
+int main() {
+    TreeNode* root = new TreeNode(1);
+    root->left = new TreeNode(2);
+    root->right = new TreeNode(2);
+    root->left->left = new TreeNode(3);
+    root->left->right = new TreeNode(4);
+    root->right->left = new TreeNode(4);
+    root->right->right = new TreeNode(3);
+
+    bool sym = isSymmetric(root);
+    if (sym) {
+        cout << "Tree is Symmetric" << endl;
+    } else {
+        cout << "Tree is Not Symmetric" << endl;
+    }
+}
+`,
+  },
+  {
+    id: 'path-sum',
+    name: '14. Path Sum Root-to-Leaf (LC 112)',
+    category: 'LeetCode & Competitive Programming',
+    description: 'Determines if the tree has a root-to-leaf path summing to targetSum.',
+    explanation: 'Subtracts current node value and recurses down to leaf nodes checking if remainder matches leaf.',
+    code: `#include <iostream>
+using namespace std;
+
+struct TreeNode {
+    int val;
+    TreeNode* left;
+    TreeNode* right;
+};
+
+bool hasPathSum(TreeNode* root, int targetSum) {
+    if (root == nullptr) return false;
+    if (root->left == nullptr && root->right == nullptr) {
+        return targetSum == root->val;
+    }
+    int remain = targetSum - root->val;
+    return hasPathSum(root->left, remain) || hasPathSum(root->right, remain);
+}
+
+int main() {
+    TreeNode* root = new TreeNode(5);
+    root->left = new TreeNode(4);
+    root->right = new TreeNode(8);
+    root->left->left = new TreeNode(11);
+    root->left->left->left = new TreeNode(7);
+    root->left->left->right = new TreeNode(2);
+    root->right->left = new TreeNode(13);
+    root->right->right = new TreeNode(4);
+
+    bool found = hasPathSum(root, 22);
+    if (found) {
+        cout << "Path found for sum 22" << endl;
+    } else {
+        cout << "No path found" << endl;
+    }
+}
+`,
+  },
 ];

@@ -8,13 +8,21 @@ import type { TreeLayoutNode } from '../../types/tree';
 interface TreeNodeRendererProps {
   nodes: TreeLayoutNode[];
   onSelectNode?: (nodeId: string) => void;
+  selectedNodeId?: string | null;
+  showHeights?: boolean;
 }
 
-export const TreeNodeRenderer: React.FC<TreeNodeRendererProps> = ({ nodes, onSelectNode }) => {
+export const TreeNodeRenderer: React.FC<TreeNodeRendererProps> = ({
+  nodes,
+  onSelectNode,
+  selectedNodeId,
+  showHeights = true,
+}) => {
   return (
     <g className="tree-nodes-layer">
       {nodes.map((node) => {
         const { id, val, x, y, radius, state, balanceFactor, height, isWordEnd, rank } = node;
+        const isSelected = selectedNodeId === id;
 
         let strokeColor = 'rgba(255, 255, 255, 0.2)';
         let fillGradId = 'grad-node-default';
@@ -72,12 +80,23 @@ export const TreeNodeRenderer: React.FC<TreeNodeRendererProps> = ({ nodes, onSel
               />
             )}
 
+            {/* Selected Node Amber Focus Ring */}
+            {isSelected && (
+              <circle
+                r={radius + 5}
+                fill="none"
+                stroke="#f59e0b"
+                strokeWidth="2.2"
+                strokeDasharray="4 3"
+              />
+            )}
+
             {/* Node body circle */}
             <circle
               r={radius}
               fill={`url(#${fillGradId})`}
-              stroke={strokeColor}
-              strokeWidth="2.5"
+              stroke={isSelected ? '#f59e0b' : strokeColor}
+              strokeWidth={isSelected ? '3' : '2.5'}
               filter="url(#node-shadow)"
             />
 
@@ -118,7 +137,7 @@ export const TreeNodeRenderer: React.FC<TreeNodeRendererProps> = ({ nodes, onSel
             )}
 
             {/* Height badge (attached at bottom-right) */}
-            {height !== undefined && balanceFactor === undefined && (
+            {showHeights && height !== undefined && balanceFactor === undefined && (
               <g transform={`translate(${radius - 4}, ${radius - 4})`}>
                 <rect
                   x="-12"

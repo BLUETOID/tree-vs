@@ -1,7 +1,7 @@
 /**
- * Collision-Free Hierarchical Tree Layout Algorithm
- * Computes bottom-up subtree widths so that no two nodes or subtrees can ever collide or overlap.
- * Based on the proven layout architecture from vs-recursion.
+ * Collision-Free Directional Binary & General Tree Layout Algorithm
+ * Computes bottom-up subtree width bounding boxes so that no two subtrees can ever collide.
+ * Strictly preserves binary left/right directional branching even when single-child nodes exist.
  */
 
 import type { TreeNodeData, TreeLayoutNode, TreeLayoutEdge, TreeEdgeState } from '../../types/tree';
@@ -20,7 +20,7 @@ export interface TreeLayoutResult {
 }
 
 const NODE_RADIUS = 22;
-const NODE_WIDTH = 54; // Width allocation for a circular tree node
+const NODE_WIDTH = 54; // Base width for a circular tree node
 const NODE_GAP_X = 36; // Minimum horizontal gap between sibling subtrees
 const LEVEL_HEIGHT_Y = 85; // Vertical spacing between tree levels
 
@@ -36,25 +36,20 @@ export function computeTreeLayout(
     };
   }
 
-  // 1. Build parent -> children map and find valid roots
-  const childrenMap = new Map<string, string[]>();
-  const parentMap = new Map<string, string>();
   const allIds = new Set(Object.keys(nodesMap));
+  const parentMap = new Map<string, string>();
 
   for (const [id, data] of Object.entries(nodesMap)) {
-    const children: string[] = [];
     if (data.left && allIds.has(data.left)) {
-      children.push(data.left);
       parentMap.set(data.left, id);
     }
     if (data.right && allIds.has(data.right)) {
-      children.push(data.right);
       parentMap.set(data.right, id);
     }
-    childrenMap.set(id, children);
   }
 
-  // Identify roots: starting with the provided rootId, or any node without parent
+  // Identify roots: primary tree starts with rootId.
+  // Any disconnected nodes without parent are placed as secondary auxiliary roots.
   const roots: string[] = [];
   if (nodesMap[rootId]) {
     roots.push(rootId);
@@ -65,84 +60,126 @@ export function computeTreeLayout(
     }
   }
 
-  // 2. Bottom-up subtree width computation to guarantee zero collision
+  // 1. Bottom-up subtree width computation preserving directional binary slots
   const subtreeWidths = new Map<string, number>();
   const visitedSubtree = new Set<string>();
 
-  function computeSubtreeWidth(id: string): number {
+  function computeBinarySubtreeWidth(id: string): number {
     if (visitedSubtree.has(id)) {
       return subtreeWidths.get(id) || (NODE_WIDTH + NODE_GAP_X);
     }
     visitedSubtree.add(id);
 
-    const children = childrenMap.get(id) || [];
-    const selfWidth = NODE_WIDTH + NODE_GAP_X;
+    const node = nodesMap[id];
+    if (!node) return NODE_WIDTH + NODE_GAP_X;
 
-    if (children.length === 0) {
-      subtreeWidths.set(id, selfWidth);
-      return selfWidth;
+    const hasLeft = Boolean(node.left && allIds.has(node.left));
+    const hasRight = Boolean(node.right && allIds.has(node.right));
+
+    if (!hasLeft && !hasRight) {
+      const w = NODE_WIDTH + NODE_GAP_X;
+      subtreeWidths.set(id, w);
+      return w;
     }
 
-    let childrenTotalWidth = 0;
-    for (const childId of children) {
-      childrenTotalWidth += computeSubtreeWidth(childId);
-    }
+    const wL = hasLeft ? computeBinarySubtreeWidth(node.left!) : 0;
+    const wR = hasRight ? computeBinarySubtreeWidth(node.right!) : 0;
 
-    const totalWidth = Math.max(selfWidth, childrenTotalWidth);
+    // When single child exists, allocate virtual reserved space for the missing sibling
+    // to guarantee the single child angles outward in its proper binary direction.
+    const minBranchPadding = (NODE_WIDTH + NODE_GAP_X) * 0.7;
+    const effectiveL = hasLeft ? wL : (hasRight ? minBranchPadding : 0);
+    const effectiveR = hasRight ? wR : (hasLeft ? minBranchPadding : 0);
+
+    const totalWidth = Math.max(NODE_WIDTH + NODE_GAP_X, effectiveL + effectiveR);
     subtreeWidths.set(id, totalWidth);
     return totalWidth;
   }
 
   for (const r of roots) {
-    computeSubtreeWidth(r);
+    computeBinarySubtreeWidth(r);
   }
 
-  // 3. Top-down position placement with strict non-overlapping partitions
+  // 2. Top-down directional placement with non-overlapping bounding box partitions
   const positions = new Map<string, { x: number; y: number }>();
   const visitedLayout = new Set<string>();
 
-  function layoutSubtree(id: string, startX: number, depth: number): void {
+  function layoutBinarySubtree(id: string, startX: number, depth: number): void {
     if (visitedLayout.has(id)) return;
     visitedLayout.add(id);
 
+    const node = nodesMap[id];
+    if (!node) return;
+
     const subWidth = subtreeWidths.get(id) || (NODE_WIDTH + NODE_GAP_X);
     const y = 60 + depth * LEVEL_HEIGHT_Y;
-    const children = childrenMap.get(id) || [];
 
-    if (children.length === 0) {
+    const hasLeft = Boolean(node.left && allIds.has(node.left));
+    const hasRight = Boolean(node.right && allIds.has(node.right));
+
+    if (!hasLeft && !hasRight) {
       const x = startX + subWidth / 2;
       positions.set(id, { x, y });
       return;
     }
 
-    let childrenTotalWidth = 0;
-    for (const childId of children) {
-      childrenTotalWidth += subtreeWidths.get(childId) || (NODE_WIDTH + NODE_GAP_X);
+    const minBranchPadding = (NODE_WIDTH + NODE_GAP_X) * 0.7;
+    const wL = hasLeft ? (subtreeWidths.get(node.left!) || (NODE_WIDTH + NODE_GAP_X)) : minBranchPadding;
+    const wR = hasRight ? (subtreeWidths.get(node.right!) || (NODE_WIDTH + NODE_GAP_X)) : minBranchPadding;
+
+    const effectiveL = hasLeft ? wL : minBranchPadding;
+    const effectiveR = hasRight ? wR : minBranchPadding;
+    const totalEffective = effectiveL + effectiveR;
+    const offset = Math.max(0, (subWidth - totalEffective) / 2);
+
+    let leftCenterX = startX + offset + effectiveL / 2;
+    let rightCenterX = startX + offset + effectiveL + effectiveR / 2;
+
+    if (hasLeft) {
+      layoutBinarySubtree(node.left!, startX + offset, depth + 1);
+      const lPos = positions.get(node.left!);
+      if (lPos) leftCenterX = lPos.x;
     }
 
-    const childOffset = Math.max(0, (subWidth - childrenTotalWidth) / 2);
-    let currentChildX = startX + childOffset;
-    const childXs: number[] = [];
-
-    for (const childId of children) {
-      const cWidth = subtreeWidths.get(childId) || (NODE_WIDTH + NODE_GAP_X);
-      layoutSubtree(childId, currentChildX, depth + 1);
-      childXs.push(currentChildX + cWidth / 2);
-      currentChildX += cWidth;
+    if (hasRight) {
+      layoutBinarySubtree(node.right!, startX + offset + effectiveL, depth + 1);
+      const rPos = positions.get(node.right!);
+      if (rPos) rightCenterX = rPos.x;
     }
 
-    // Center parent over its children
-    const midChildX = (childXs[0] + childXs[childXs.length - 1]) / 2;
-    positions.set(id, { x: midChildX, y });
+    // Directional parent centering:
+    // Left child strictly branches left (< parentX), right child strictly branches right (> parentX)
+    let parentX = (leftCenterX + rightCenterX) / 2;
+    if (hasLeft && !hasRight) {
+      parentX = leftCenterX + minBranchPadding;
+    } else if (!hasLeft && hasRight) {
+      parentX = rightCenterX - minBranchPadding;
+    }
+
+    depths.set(id, depth);
+    positions.set(id, { x: parentX, y });
+  }
+
+  const depths = new Map<string, number>();
+  const heights = new Map<string, number>();
+  function calcSubtreeHeight(id: string): number {
+    if (heights.has(id)) return heights.get(id)!;
+    const node = nodesMap[id];
+    if (!node) return 0;
+    const hL = node.left && allIds.has(node.left) ? calcSubtreeHeight(node.left) : 0;
+    const hR = node.right && allIds.has(node.right) ? calcSubtreeHeight(node.right) : 0;
+    const h = 1 + Math.max(hL, hR);
+    heights.set(id, h);
+    return h;
   }
 
   let currentStartX = 60;
   for (const r of roots) {
-    layoutSubtree(r, currentStartX, 0);
-    currentStartX += (subtreeWidths.get(r) || (NODE_WIDTH + NODE_GAP_X)) + 40;
+    layoutBinarySubtree(r, currentStartX, 0);
+    currentStartX += (subtreeWidths.get(r) || (NODE_WIDTH + NODE_GAP_X)) + 60;
   }
 
-  // 4. Assemble layout nodes, curved connecting edges, and bounds
+  // 3. Assemble layout nodes, curved connecting edges, and bounds
   const layoutNodes: TreeLayoutNode[] = [];
   const layoutEdges: TreeLayoutEdge[] = [];
   let minX = Infinity;
@@ -164,7 +201,9 @@ export function computeTreeLayout(
       y: pos.y,
       radius: NODE_RADIUS,
       state: data.state || 'default',
-      height: data.height,
+      parent: data.parent,
+      height: data.height ?? calcSubtreeHeight(id),
+      depth: depths.get(id) ?? 0,
       balanceFactor: data.balanceFactor,
       isWordEnd: data.isWordEnd,
       rank: data.rank,

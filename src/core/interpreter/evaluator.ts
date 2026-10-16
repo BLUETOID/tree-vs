@@ -48,8 +48,11 @@ export class Evaluator {
   private stdout: string = '';
   private maxSteps: number = 5000;
   private stepCount: number = 0;
+  private ast: ProgramNode;
+  private globals: Record<string, any> = {};
 
   constructor(ast: ProgramNode) {
+    this.ast = ast;
     for (const stmt of ast.body) {
       if (stmt.type === 'FunctionDeclaration') {
         const fn = stmt as FunctionDeclNode;
@@ -60,6 +63,18 @@ export class Evaluator {
 
   public run(): InterpreterResult {
     try {
+      // Initialize global variable declarations before entering main()
+      for (const stmt of this.ast.body) {
+        if (stmt.type === 'VariableDeclaration') {
+          const decl = stmt as VariableDeclNode;
+          let val: any = undefined;
+          if (decl.initializer) {
+            val = this.evaluateExpression(decl.initializer);
+          }
+          this.globals[decl.name] = val;
+        }
+      }
+
       const mainFn = this.functions.get('main');
       if (!mainFn) {
         return {
@@ -92,51 +107,14 @@ export class Evaluator {
     const currentFrame = this.callStack[this.callStack.length - 1];
     const mainFrame = this.callStack[0];
 
-    // Find active pointer markers from current frame variables
-    const pointers: PointerMarker[] = [];
-    let activeNodeId: string | null = null;
-    let queueState: any[] = [];
-
-    if (currentFrame) {
-      const allVars = { ...currentFrame.args, ...currentFrame.locals };
-      for (const [varName, val] of Object.entries(allVars)) {
-        if (typeof val === 'string' && this.heap.has(val)) {
-          let color = '#06b6d4';
-          if (varName === 'root') {
-            color = '#06b6d4';
-            activeNodeId = val;
-          } else if (varName === 'curr') {
-            color = '#38bdf8';
-            activeNodeId = val;
-          } else if (varName === 'parent') {
-            color = '#a855f7';
-          } else if (varName === 'p' || varName === 'q') {
-            color = '#eab308';
-          } else if (varName === 'temp') {
-            color = '#ec4899';
-          }
-
-          pointers.push({ name: varName, nodeId: val, color });
-        } else if (val && typeof val === 'object' && val.__type === 'queue') {
-          queueState = val.items.map((item: any) =>
-            typeof item === 'string' && this.heap.has(item) ? this.heap.get(item)!.val : item
-          );
-        }
-      }
-    }
-
-    // Determine AUTHORITATIVE ROOT:
-    // 1. Candidate root from currentFrame or mainFrame `root` variable
-    let candidateRootId: string | null = null;
-    if (currentFrame && typeof currentFrame.locals['root'] === 'string' && this.heap.has(currentFrame.locals['root'])) {
-      candidateRootId = currentFrame.locals['root'];
-    } else if (currentFrame && typeof currentFrame.args['root'] === 'string' && this.heap.has(currentFrame.args['root'])) {
-      candidateRootId = currentFrame.args['root'];
-    } else if (mainFrame && typeof mainFrame.locals['root'] === 'string' && this.heap.has(mainFrame.locals['root'])) {
-      candidateRootId = mainFrame.locals['root'];
-    }
-
-    // 2. Count incoming pointer edges for each node in heap
+    // 1. Authoritative Tree Root Determination:
+    // The visualizer represents the persistent tree structure in heap memory.
+    // The true root of the tree MUST be:
+    // a) The `root` variable declared/held in `mainFrame` (mainFrame.locals['root'] or mainFrame.args['root'])
+    // b) Fallback: Topological in-degree 0 node (a node in heap that has no other node pointing left or right to it)
+    // NEVER allow a recursive function parameter (such as `inorder(TreeNode* root)`) to usurp the tree's rootId!
+    
+    // Count incoming pointer edges for each node in heap
     const incomingCount: Map<string, number> = new Map();
     for (const [id] of this.heap) {
       incomingCount.set(id, 0);
@@ -150,19 +128,70 @@ export class Evaluator {
       }
     }
 
-    // 3. Candidate roots with zero incoming edges
     const zeroIncomingNodes: string[] = [];
     for (const [id, count] of incomingCount) {
       if (count === 0) zeroIncomingNodes.push(id);
     }
 
     let rootId: string | null = null;
-    if (candidateRootId && this.heap.has(candidateRootId)) {
-      rootId = candidateRootId;
+    if (mainFrame && typeof mainFrame.locals['root'] === 'string' && this.heap.has(mainFrame.locals['root'])) {
+      rootId = mainFrame.locals['root'];
+    } else if (mainFrame && typeof mainFrame.args['root'] === 'string' && this.heap.has(mainFrame.args['root'])) {
+      rootId = mainFrame.args['root'];
     } else if (zeroIncomingNodes.length > 0) {
       rootId = zeroIncomingNodes[0];
     } else if (this.heap.size > 0) {
       rootId = this.heap.keys().next().value || null;
+    }
+
+    // 2. Pointer Badges:
+    const pointers: PointerMarker[] = [];
+    let activeNodeId: string | null = null;
+    let queueState: any[] = [];
+
+    // Always include the tree's primary root pointer if available
+    if (rootId && this.heap.has(rootId)) {
+      pointers.push({ name: 'root', nodeId: rootId, color: '#06b6d4' });
+    }
+
+    if (currentFrame) {
+      const allVars = { ...currentFrame.args, ...currentFrame.locals };
+      for (const [varName, val] of Object.entries(allVars)) {
+        if (typeof val === 'string' && this.heap.has(val)) {
+          let color = '#38bdf8';
+          let displayName = varName;
+
+          if (varName === 'root') {
+            if (currentFrame.name !== 'main') {
+              // Inner recursive parameter! Display with function scope so it's clear
+              displayName = `${currentFrame.name}.root`;
+              color = '#f59e0b'; // Amber to distinguish from top-level root
+              activeNodeId = val;
+            } else {
+              // Already added above
+              continue;
+            }
+          } else if (varName === 'curr') {
+            color = '#38bdf8';
+            activeNodeId = val;
+          } else if (varName === 'parent') {
+            color = '#a855f7';
+          } else if (varName === 'p' || varName === 'q') {
+            color = '#eab308';
+          } else if (varName === 'temp') {
+            color = '#ec4899';
+          } else if (varName === 'res') {
+            color = '#10b981';
+          }
+
+          pointers.push({ name: displayName, nodeId: val, color });
+          if (!activeNodeId) activeNodeId = val;
+        } else if (val && typeof val === 'object' && val.__type === 'queue') {
+          queueState = val.items.map((item: any) =>
+            typeof item === 'string' && this.heap.has(item) ? this.heap.get(item)!.val : item
+          );
+        }
+      }
     }
 
     // Deep copy heap for snapshot and derive clean parent pointers without cycles
@@ -227,6 +256,13 @@ export class Evaluator {
           };
         }),
         queue: queueState.length > 0 ? queueState : undefined,
+        breadcrumbs: this.callStack.map((f) => {
+          const argsStr = Object.entries(f.args)
+            .map(([k, v]) => `${k}=${typeof v === 'string' && this.heap.has(v) ? this.heap.get(v)!.val : v}`)
+            .join(', ');
+          return `${f.name}(${argsStr})`;
+        }),
+        recursionDepth: this.callStack.length,
       },
     };
 
@@ -321,10 +357,12 @@ export class Evaluator {
       case 'AssignmentStatement': {
         const assign = stmt as AssignmentNode;
         const val = this.evaluateExpression(assign.value);
-        if (frame.locals[assign.target] !== undefined || Object.prototype.hasOwnProperty.call(frame.locals, assign.target)) {
+        if (Object.prototype.hasOwnProperty.call(frame.locals, assign.target)) {
           frame.locals[assign.target] = val;
-        } else if (frame.args[assign.target] !== undefined || Object.prototype.hasOwnProperty.call(frame.args, assign.target)) {
+        } else if (Object.prototype.hasOwnProperty.call(frame.args, assign.target)) {
           frame.args[assign.target] = val;
+        } else if (Object.prototype.hasOwnProperty.call(this.globals, assign.target)) {
+          this.globals[assign.target] = val;
         } else {
           frame.locals[assign.target] = val;
         }
@@ -433,6 +471,8 @@ export class Evaluator {
         if (id === 'false') return false;
         if (id === 'endl') return 'endl';
         if (id === 'cout') return 'cout';
+        if (id === 'INT_MIN' || id === 'LONG_MIN') return -2147483648;
+        if (id === 'INT_MAX' || id === 'LONG_MAX') return 2147483647;
 
         // P0: Safe check against frame.locals and frame.args without prototype pollution
         if (frame) {
@@ -442,6 +482,11 @@ export class Evaluator {
           if (Object.prototype.hasOwnProperty.call(frame.args, id)) {
             return frame.args[id];
           }
+        }
+
+        // Global variables
+        if (Object.prototype.hasOwnProperty.call(this.globals, id)) {
+          return this.globals[id];
         }
 
         // Global / Builtin functions

@@ -1,12 +1,13 @@
 /**
  * Free-Form Interactive Canvas Viewport
- * Cursor-centered zoom, smooth pan, fit to view, and centered node focus matching vs-recursion
+ * Cursor-centered zoom, smooth pan, fit to view, recursion breadcrumbs HUD,
+ * interactive node inspector, and directional tree rendering.
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Crosshair, CircleDashed } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Crosshair, CircleDashed, X } from 'lucide-react';
 import type { TreeLayoutResult } from '../../core/layout/tidyTree';
-import type { PointerMarker } from '../../types/tree';
+import type { PointerMarker, TreeNodeData } from '../../types/tree';
 import { TreeEdgeRenderer } from './TreeEdgeRenderer';
 import { TreeNodeRenderer } from './TreeNodeRenderer';
 import { PointerBadges } from './PointerBadges';
@@ -17,6 +18,9 @@ interface CanvasViewportProps {
   activeNodeId?: string;
   onSelectNode?: (nodeId: string) => void;
   resetCameraTrigger?: number | string;
+  breadcrumbs?: string[];
+  recursionDepth?: number;
+  rawNodes?: Record<string, TreeNodeData>;
 }
 
 export const CanvasViewport: React.FC<CanvasViewportProps> = ({
@@ -25,6 +29,9 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   activeNodeId,
   onSelectNode,
   resetCameraTrigger,
+  breadcrumbs,
+  recursionDepth,
+  rawNodes,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -32,6 +39,14 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const hasInitialFitRef = useRef<boolean>(false);
+
+  // Educational Inspector & Metric Toggles
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [showHeights, setShowHeights] = useState<boolean>(true);
+
+  // Derive active selection during render (avoid cascading effect renders)
+  const activeSelectedId =
+    selectedNodeId && layout.nodes.some((n) => n.id === selectedNodeId) ? selectedNodeId : null;
 
   // Center & Fit to Screen
   const fitToView = useCallback(() => {
@@ -82,7 +97,15 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
 
   // Mouse Pan Handlers
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.floating-canvas-controls')) return;
+    if (
+      (e.target as HTMLElement).closest('.floating-canvas-controls') ||
+      (e.target as HTMLElement).closest('.canvas-node-inspector') ||
+      (e.target as HTMLElement).closest('.canvas-breadcrumbs-hud') ||
+      (e.target as HTMLElement).closest('.tree-node-group')
+    ) {
+      return;
+    }
+    setSelectedNodeId(null);
     setIsDragging(true);
     dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
   };
@@ -118,6 +141,11 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     setPan({ x: newPanX, y: newPanY });
   };
 
+  // Inspector target node data
+  const selectedNode = activeSelectedId ? layout.nodes.find((n) => n.id === activeSelectedId) : null;
+  const rawSelected = activeSelectedId && rawNodes ? rawNodes[activeSelectedId] : undefined;
+  const nodePointers = activeSelectedId ? pointers.filter((p) => p.nodeId === activeSelectedId) : [];
+
   return (
     <div
       ref={containerRef}
@@ -129,8 +157,41 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       onWheel={handleWheel}
       id="tree-canvas-panel"
     >
-      {/* Floating Canvas Controls Overlay */}
+      {/* Floating Recursion Breadcrumbs HUD at Top-Left */}
+      {breadcrumbs && breadcrumbs.length > 0 && (
+        <div className="canvas-breadcrumbs-hud" onClick={(e) => e.stopPropagation()}>
+          <div className="hud-title-bar">
+            <span className="hud-label">RECURSION PATH</span>
+            {recursionDepth !== undefined && recursionDepth > 0 && (
+              <span className="hud-depth-badge">Depth: {recursionDepth}</span>
+            )}
+          </div>
+          <div className="hud-trail">
+            {breadcrumbs.map((crumb, idx) => {
+              const isLatest = idx === breadcrumbs.length - 1;
+              return (
+                <React.Fragment key={idx}>
+                  {idx > 0 && <span className="hud-chevron">❯</span>}
+                  <span className={`hud-crumb ${isLatest ? 'hud-crumb-active' : ''}`} title={crumb}>
+                    {crumb}
+                  </span>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Floating Canvas Controls Overlay at Top-Right */}
       <div className="floating-canvas-controls" onClick={(e) => e.stopPropagation()}>
+        <button
+          className={`canvas-btn ${showHeights ? 'active-btn' : ''}`}
+          onClick={() => setShowHeights((prev) => !prev)}
+          title={showHeights ? 'Hide Subtree Heights' : 'Show Subtree Heights (H)'}
+        >
+          <span style={{ fontSize: '11px', fontWeight: 700 }}>H</span>
+        </button>
+        <div className="controls-separator" />
         <button
           className="canvas-btn"
           onClick={() => setZoom((prev) => Math.min(3.0, prev * 1.2))}
@@ -177,6 +238,103 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
           <RotateCcw size={14} />
         </button>
       </div>
+
+      {/* Interactive Node Inspector Card at Bottom-Left */}
+      {selectedNode && (
+        <div className="canvas-node-inspector" onClick={(e) => e.stopPropagation()}>
+          <div className="inspector-header">
+            <div className="inspector-title">
+              <span className="inspector-badge">NODE</span>
+              <span className="inspector-val">{selectedNode.val}</span>
+              <span className="inspector-id">({selectedNode.id})</span>
+            </div>
+            <button
+              className="inspector-close"
+              onClick={() => setSelectedNodeId(null)}
+              title="Close Inspector"
+            >
+              <X size={13} />
+            </button>
+          </div>
+
+          <div className="inspector-grid">
+            <div className="inspector-row">
+              <span className="inspector-label">Memory Address:</span>
+              <span className="inspector-code">
+                {rawSelected?.address ||
+                  `0x${(4096 + (parseInt(selectedNode.id.replace(/\D/g, '') || '1')) * 32).toString(16)}`}
+              </span>
+            </div>
+            <div className="inspector-row">
+              <span className="inspector-label">Depth (from root):</span>
+              <span className="inspector-metric">{selectedNode.depth ?? 0}</span>
+            </div>
+            <div className="inspector-row">
+              <span className="inspector-label">Subtree Height:</span>
+              <span className="inspector-metric">{selectedNode.height ?? 0}</span>
+            </div>
+            {selectedNode.balanceFactor !== undefined && (
+              <div className="inspector-row">
+                <span className="inspector-label">AVL Balance Factor:</span>
+                <span
+                  className="inspector-metric"
+                  style={{
+                    color: Math.abs(selectedNode.balanceFactor) > 1 ? '#f87171' : '#38bdf8',
+                  }}
+                >
+                  {selectedNode.balanceFactor > 0
+                    ? `+${selectedNode.balanceFactor}`
+                    : selectedNode.balanceFactor}
+                </span>
+              </div>
+            )}
+            <div className="inspector-row">
+              <span className="inspector-label">Parent:</span>
+              <span className="inspector-code">
+                {selectedNode.parent
+                  ? `${rawNodes?.[selectedNode.parent]?.val ?? selectedNode.parent} (${selectedNode.parent})`
+                  : 'nullptr (Root)'}
+              </span>
+            </div>
+            <div className="inspector-row">
+              <span className="inspector-label">Left Child:</span>
+              <span className="inspector-code">
+                {rawSelected?.left
+                  ? `${rawNodes?.[rawSelected.left]?.val ?? rawSelected.left} (${rawSelected.left})`
+                  : 'nullptr'}
+              </span>
+            </div>
+            <div className="inspector-row">
+              <span className="inspector-label">Right Child:</span>
+              <span className="inspector-code">
+                {rawSelected?.right
+                  ? `${rawNodes?.[rawSelected.right]?.val ?? rawSelected.right} (${rawSelected.right})`
+                  : 'nullptr'}
+              </span>
+            </div>
+            {nodePointers.length > 0 && (
+              <div className="inspector-row">
+                <span className="inspector-label">Active Pointers:</span>
+                <div className="inspector-badges">
+                  {nodePointers.map((p, i) => (
+                    <span
+                      key={i}
+                      className="inspector-ptr-badge"
+                      style={{
+                        backgroundColor: p.color ? `${p.color}25` : 'rgba(6, 182, 212, 0.2)',
+                        borderColor: p.color || '#06b6d4',
+                        color: p.color || '#06b6d4',
+                      }}
+                    >
+                      {p.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {layout.nodes.length === 0 ? (
         <div className="empty-canvas">
@@ -242,7 +400,15 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
           {/* Pan & Zoom Transformed Container */}
           <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
             <TreeEdgeRenderer edges={layout.edges} />
-            <TreeNodeRenderer nodes={layout.nodes} onSelectNode={onSelectNode} />
+            <TreeNodeRenderer
+              nodes={layout.nodes}
+              onSelectNode={(nodeId) => {
+                setSelectedNodeId(nodeId);
+                onSelectNode?.(nodeId);
+              }}
+              selectedNodeId={activeSelectedId}
+              showHeights={showHeights}
+            />
             <PointerBadges pointers={pointers} layoutNodes={layout.nodes} />
           </g>
         </svg>

@@ -27,6 +27,7 @@ export interface TreeNodeData {
   left: string | null;
   right: string | null;
   parent: string | null;
+  address?: string;
   height?: number;
   balanceFactor?: number;
   isWordEnd?: boolean; // For Trie
@@ -41,7 +42,9 @@ export interface TreeLayoutNode {
   y: number;
   radius: number;
   state: TreeNodeState;
+  parent?: string | null;
   height?: number;
+  depth?: number;
   balanceFactor?: number;
   isWordEnd?: boolean;
   rank?: number;
@@ -96,6 +99,9 @@ export interface StepAuxiliaryData {
   traversalOutput?: (number | string)[];
   rotationType?: 'LL' | 'RR' | 'LR' | 'RL';
   comparisonsCount?: number;
+  breadcrumbs?: string[];
+  recursionDepth?: number;
+  phase?: 'call' | 'base-case' | 'compare' | 'mutate' | 'return' | 'output';
 }
 
 export interface TreeStepSnapshot {
