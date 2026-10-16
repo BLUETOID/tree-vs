@@ -11,11 +11,11 @@ describe('Root Isolation & Binary Direction Layout', () => {
     expect(result.trace.length).toBeGreaterThan(5);
 
     // Assert that once root node n0 is allocated, rootId is ALWAYS 'n0' (value 4) without being hijacked by recursive calls
-    const allocatedEvents = result.trace.filter((e) => e.treeSnapshot.nodes['n0']);
+    const allocatedEvents = result.trace.filter((e) => e.treeSnapshot?.nodes['n0']);
     expect(allocatedEvents.length).toBeGreaterThan(5);
     for (const event of allocatedEvents) {
-      expect(event.treeSnapshot.rootId).toBe('n0');
-      expect(event.treeSnapshot.nodes['n0']?.val).toBe(4);
+      expect(event.treeSnapshot?.rootId).toBe('n0');
+      expect(event.treeSnapshot?.nodes['n0']?.val).toBe(4);
     }
   });
 

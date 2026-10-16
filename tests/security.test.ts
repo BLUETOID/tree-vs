@@ -12,7 +12,7 @@ describe('Security & Isolation (P0 Prototype Pollution)', () => {
       }
     `;
 
-    const _result = runCppTreeInterpreter(maliciousCode);
+    runCppTreeInterpreter(maliciousCode);
     // Should fail or reject, but NEVER pollute Object.prototype
     expect((Object.prototype as any).val).toBeUndefined();
     expect((Object.prototype as any).__treevsAuditMarker).toBeUndefined();

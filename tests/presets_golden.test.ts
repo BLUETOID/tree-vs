@@ -9,7 +9,7 @@ describe('Bundled Preset Integration & Invariant Tests', () => {
     expect(result.error).toBeUndefined();
     expect(result.trace.length).toBeGreaterThan(10);
 
-    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot;
+    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot!;
     expect(finalSnapshot.rootId).toBe('n0');
     expect(Object.keys(finalSnapshot.nodes).length).toBe(7);
   });
@@ -21,7 +21,7 @@ describe('Bundled Preset Integration & Invariant Tests', () => {
 
     // Check pointer markers at end
     const lastEvent = result.trace[result.trace.length - 1];
-    const resMarker = lastEvent.treeSnapshot.pointers.find((p) => p.name === 'res');
+    const resMarker = lastEvent.treeSnapshot?.pointers.find((p) => p.name === 'res');
     expect(resMarker).toBeDefined();
     expect(resMarker?.nodeId).toBe('n4'); // Node with val 20
   });
@@ -31,7 +31,7 @@ describe('Bundled Preset Integration & Invariant Tests', () => {
     const result = runCppTreeInterpreter(preset.code);
     expect(result.error).toBeUndefined();
 
-    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot;
+    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot!;
     expect(finalSnapshot.rootId).toBe('n0');
   });
 
@@ -40,7 +40,7 @@ describe('Bundled Preset Integration & Invariant Tests', () => {
     const result = runCppTreeInterpreter(preset.code);
     expect(result.error).toBeUndefined();
 
-    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot;
+    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot!;
     const root = finalSnapshot.nodes[finalSnapshot.rootId!];
     expect(root.val).toBe(4);
     // Left was 2, right was 7; after inversion root->left is 7 and root->right is 2
@@ -60,7 +60,7 @@ describe('Bundled Preset Integration & Invariant Tests', () => {
     const result = runCppTreeInterpreter(preset.code);
     expect(result.error).toBeUndefined();
 
-    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot;
+    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot!;
     expect(finalSnapshot.rootId).toBe('n1'); // Node with val 20 is the new root!
     const root = finalSnapshot.nodes[finalSnapshot.rootId!];
     expect(root.val).toBe(20);
@@ -73,7 +73,7 @@ describe('Bundled Preset Integration & Invariant Tests', () => {
     const result = runCppTreeInterpreter(preset.code);
     expect(result.error).toBeUndefined();
 
-    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot;
+    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot!;
     expect(finalSnapshot.rootId).toBe('n2'); // Node with val 20 is the new root!
     const root = finalSnapshot.nodes[finalSnapshot.rootId!];
     expect(root.val).toBe(20);
