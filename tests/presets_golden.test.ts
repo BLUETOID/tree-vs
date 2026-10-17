@@ -129,4 +129,14 @@ describe('Bundled Preset Integration & Invariant Tests', () => {
     expect(result.error).toBeUndefined();
     expect(result.stdout.trim()).toBe('Path found for sum 22');
   });
+
+  it('15. tree-dfs-cin: reads n and edges from custom stdin and prints DFS sequence', () => {
+    const preset = PRESET_PROGRAMS.find((p) => p.id === 'tree-dfs-cin')!;
+    const result = runCppTreeInterpreter(preset.code, preset.stdin);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('1 2 4 3');
+    const finalSnapshot = result.trace[result.trace.length - 1].treeSnapshot!;
+    expect(finalSnapshot.rootId).toBe('1');
+    expect(Object.keys(finalSnapshot.nodes).length).toBe(4);
+  });
 });

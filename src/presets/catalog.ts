@@ -9,6 +9,7 @@ export interface PresetProgram {
   description: string;
   explanation: string;
   code: string;
+  stdin?: string;
 }
 
 export const PRESET_PROGRAMS: PresetProgram[] = [
@@ -590,6 +591,45 @@ int main() {
     } else {
         cout << "No path found" << endl;
     }
+}
+`,
+  },
+  {
+    id: 'tree-dfs-cin',
+    name: '15. Tree DFS with Custom Stdin (CodeChef / CP)',
+    category: 'LeetCode & Competitive Programming',
+    description: 'Constructs an adjacency list tree from cin and visualizes DFS traversal with custom input.',
+    explanation:
+      'Reads node count n and n-1 edges from std::cin, populates vector<int> tree[], and executes depth-first search while visualising each step live.',
+    stdin: `4
+1 2
+1 3
+2 4`,
+    code: `#include <bits/stdc++.h>
+using namespace std;
+
+const int maxx = 100005;
+vector <int> tree[maxx];
+
+void dfs(int node) {
+    cout << node << " ";
+    for (auto i: tree[node]) {
+        dfs(i);
+    }
+}
+
+int main() {
+    int n;
+    cin >> n;
+    
+    int u, v;
+    for (int i = 0; i < n - 1; i++) {
+        cin >> u >> v;
+        tree[u].push_back(v);
+    }
+    
+    // Start DFS from the root node
+    dfs(1);
 }
 `,
   },

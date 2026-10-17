@@ -8,18 +8,26 @@ export type ASTNodeType =
   | 'StructDeclaration'
   | 'VariableDeclaration'
   | 'AssignmentStatement'
+  | 'CompoundAssignmentStatement'
   | 'MemberAssignmentStatement'
+  | 'IndexAssignmentStatement'
   | 'IfStatement'
   | 'WhileStatement'
+  | 'ForStatement'
+  | 'RangeForStatement'
+  | 'BreakStatement'
+  | 'ContinueStatement'
   | 'ReturnStatement'
   | 'ExpressionStatement'
   | 'BlockStatement'
   | 'EmptyStatement'
   | 'BinaryExpression'
   | 'UnaryExpression'
+  | 'UpdateExpression'
   | 'CallExpression'
   | 'MemberCallExpression'
   | 'MemberAccessExpression'
+  | 'IndexAccessExpression'
   | 'ConditionalExpression'
   | 'NewExpression'
   | 'Identifier'
@@ -49,11 +57,72 @@ export interface StructDeclNode extends BaseASTNode {
   members: { type: string; name: string }[];
 }
 
+export interface VariableDeclarator {
+  name: string;
+  isArray?: boolean;
+  arraySize?: BaseASTNode;
+  initializer?: BaseASTNode;
+}
+
 export interface VariableDeclNode extends BaseASTNode {
   type: 'VariableDeclaration';
   varType: string;
   name: string;
   initializer?: BaseASTNode;
+  isArray?: boolean;
+  arraySize?: BaseASTNode;
+  declarations?: VariableDeclarator[];
+}
+
+export interface ForStatementNode extends BaseASTNode {
+  type: 'ForStatement';
+  init?: BaseASTNode;
+  condition?: BaseASTNode;
+  update?: BaseASTNode;
+  body: BaseASTNode;
+}
+
+export interface RangeForStatementNode extends BaseASTNode {
+  type: 'RangeForStatement';
+  varType: string;
+  varName: string;
+  iterable: BaseASTNode;
+  body: BaseASTNode;
+}
+
+export interface BreakStatementNode extends BaseASTNode {
+  type: 'BreakStatement';
+}
+
+export interface ContinueStatementNode extends BaseASTNode {
+  type: 'ContinueStatement';
+}
+
+export interface IndexAccessNode extends BaseASTNode {
+  type: 'IndexAccessExpression';
+  object: BaseASTNode;
+  index: BaseASTNode;
+}
+
+export interface IndexAssignmentNode extends BaseASTNode {
+  type: 'IndexAssignmentStatement';
+  object: BaseASTNode;
+  index: BaseASTNode;
+  value: BaseASTNode;
+}
+
+export interface UpdateExpressionNode extends BaseASTNode {
+  type: 'UpdateExpression';
+  operator: '++' | '--';
+  argument: BaseASTNode;
+  prefix: boolean;
+}
+
+export interface CompoundAssignmentNode extends BaseASTNode {
+  type: 'CompoundAssignmentStatement';
+  target: BaseASTNode;
+  operator: '+=' | '-=' | '*=' | '/=' | '%=';
+  value: BaseASTNode;
 }
 
 export interface AssignmentNode extends BaseASTNode {

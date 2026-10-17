@@ -35,6 +35,16 @@ const KEYWORDS = new Set([
   'include',
   'TreeNode',
   'Node',
+  'const',
+  'static',
+  'unsigned',
+  'signed',
+  'long',
+  'char',
+  'float',
+  'double',
+  'break',
+  'continue',
 ]);
 
 export function tokenize(source: string): Token[] {
@@ -176,7 +186,27 @@ export function tokenize(source: string): Token[] {
 
     // Two-character operators
     const twoChars = source.slice(i, i + 2);
-    if (['->', '==', '!=', '<=', '>=', '&&', '||', '++', '--', '<<', '>>', '::'].includes(twoChars)) {
+    if (
+      [
+        '->',
+        '==',
+        '!=',
+        '<=',
+        '>=',
+        '&&',
+        '||',
+        '++',
+        '--',
+        '<<',
+        '>>',
+        '::',
+        '+=',
+        '-=',
+        '*=',
+        '/=',
+        '%=',
+      ].includes(twoChars)
+    ) {
       tokens.push({ type: 'OPERATOR', value: twoChars, line, col });
       i += 2;
       col += 2;

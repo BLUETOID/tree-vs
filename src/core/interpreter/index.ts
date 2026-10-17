@@ -7,12 +7,12 @@ import { Parser } from './parser';
 import { Evaluator } from './evaluator';
 import type { InterpreterResult } from '../../types/interpreter';
 
-export function runCppTreeInterpreter(sourceCode: string): InterpreterResult {
+export function runCppTreeInterpreter(sourceCode: string, stdin: string = ''): InterpreterResult {
   try {
     const tokens = tokenize(sourceCode);
     const parser = new Parser(tokens);
     const ast = parser.parseProgram();
-    const evaluator = new Evaluator(ast);
+    const evaluator = new Evaluator(ast, stdin);
     return evaluator.run();
   } catch (err: any) {
     return {

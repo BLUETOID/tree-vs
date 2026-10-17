@@ -32,6 +32,7 @@ export interface TreeNodeData {
   balanceFactor?: number;
   isWordEnd?: boolean; // For Trie
   rank?: number; // For DSU
+  children?: string[]; // For General Trees & Adjacency Lists
   state?: TreeNodeState;
 }
 

@@ -33,6 +33,10 @@ export const App: React.FC = () => {
     [selectedPresetId]
   );
   const [code, setCode] = useState<string>(currentPreset.code);
+  const [stdin, setStdin] = useState<string>(currentPreset.stdin || '4\n1 2\n1 3\n2 4');
+
+  // Detect if code uses standard input
+  const hasCin = useMemo(() => /cin\s*>>/.test(code), [code]);
 
   // Interpreter & Trace Timeline state
   const [trace, setTrace] = useState<TraceEvent[]>([]);
@@ -50,25 +54,29 @@ export const App: React.FC = () => {
 
   // Resizable Workspace Splitter State
   const [splitPercent, setSplitPercent] = useState<number>(44); // Left column width %
-  const [consoleHeight, setConsoleHeight] = useState<number>(160); // Bottom console height px
+  const [consoleHeight, setConsoleHeight] = useState<number>(180); // Bottom console height px
   const isDraggingSplitterRef = useRef<boolean>(false);
   const isDraggingConsoleRef = useRef<boolean>(false);
 
   const [runId, setRunId] = useState<number>(1);
 
   // Execute C++ Interpreter
-  const executeTrace = useCallback((sourceCode: string) => {
-    setIsPlaying(false);
-    const result = runCppTreeInterpreter(sourceCode);
-    setTrace(result.trace);
-    setRuntimeError(result.error);
-    setCurrentIndex(0);
-    setRunId((prev) => prev + 1);
-  }, []);
+  const executeTrace = useCallback(
+    (sourceCode: string, inputStdin?: string) => {
+      setIsPlaying(false);
+      const currentStdin = inputStdin !== undefined ? inputStdin : stdin;
+      const result = runCppTreeInterpreter(sourceCode, currentStdin);
+      setTrace(result.trace);
+      setRuntimeError(result.error);
+      setCurrentIndex(0);
+      setRunId((prev) => prev + 1);
+    },
+    [stdin]
+  );
 
   // Run on initial mount
   useEffect(() => {
-    executeTrace(code);
+    executeTrace(code, stdin);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -77,7 +85,9 @@ export const App: React.FC = () => {
     if (preset) {
       setSelectedPresetId(presetId);
       setCode(preset.code);
-      executeTrace(preset.code);
+      const newStdin = preset.stdin || '';
+      setStdin(newStdin);
+      executeTrace(preset.code, newStdin);
     }
   };
 
@@ -112,8 +122,8 @@ export const App: React.FC = () => {
   }, [currentIndex, trace.length]);
 
   const handleReset = useCallback(() => {
-    executeTrace(code);
-  }, [code, executeTrace]);
+    executeTrace(code, stdin);
+  }, [code, stdin, executeTrace]);
 
   // Auto-play interval
   useEffect(() => {
@@ -265,7 +275,7 @@ export const App: React.FC = () => {
               onChangeCode={(newCode) => setCode(newCode)}
               activeLine={currentEvent.line}
               readOnly={isPlaying}
-              onExecute={() => executeTrace(code)}
+              onExecute={() => executeTrace(code, stdin)}
             />
           </div>
 
@@ -281,11 +291,15 @@ export const App: React.FC = () => {
             }}
           />
 
-          {/* Bottom Terminal Output */}
+          {/* Bottom Terminal Output & Custom Input */}
           <TerminalConsole
             stdout={currentEvent.stdout || ''}
             error={runtimeError}
             height={consoleHeight}
+            stdin={stdin}
+            onChangeStdin={(val) => setStdin(val)}
+            hasCin={hasCin}
+            onExecute={() => executeTrace(code, stdin)}
           />
         </div>
 

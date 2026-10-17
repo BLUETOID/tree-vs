@@ -10,18 +10,26 @@ import type {
   StructDeclNode,
   VariableDeclNode,
   AssignmentNode,
+  CompoundAssignmentNode,
   MemberAssignmentNode,
+  IndexAssignmentNode,
   IfStatementNode,
   WhileStatementNode,
+  ForStatementNode,
+  RangeForStatementNode,
+  BreakStatementNode,
+  ContinueStatementNode,
   ReturnStatementNode,
   BlockStatementNode,
   EmptyStatementNode,
   ExpressionStatementNode,
   BinaryExpressionNode,
   UnaryExpressionNode,
+  UpdateExpressionNode,
   CallExpressionNode,
   MemberCallExpressionNode,
   MemberAccessNode,
+  IndexAccessNode,
   ConditionalExpressionNode,
   NewExpressionNode,
   IdentifierNode,
@@ -121,19 +129,63 @@ export class Parser {
   }
 
   private parseTypeString(): string {
-    let typeStr = this.advance().value;
+    let typeStr = '';
+    // Qualifiers: const, static, unsigned, signed
+    while (
+      this.peek().value === 'const' ||
+      this.peek().value === 'static' ||
+      this.peek().value === 'unsigned' ||
+      this.peek().value === 'signed'
+    ) {
+      typeStr += (typeStr ? ' ' : '') + this.advance().value;
+    }
+
+    if (this.peek().type !== 'EOF' && this.peek().value !== ';' && this.peek().value !== '{') {
+      typeStr += (typeStr ? ' ' : '') + this.advance().value;
+    }
+
+    // Long long
+    if (typeStr.endsWith('long') && this.peek().value === 'long') {
+      typeStr += ' ' + this.advance().value;
+    }
+
     while (this.peek().value === '*' || this.peek().value === '&' || this.peek().value === '<') {
       if (this.peek().value === '<') {
         typeStr += this.advance().value;
-        while (this.peek().type !== 'EOF' && this.peek().value !== '>') {
+        let depth = 1;
+        while (this.peek().type !== 'EOF' && depth > 0) {
+          if (this.peek().value === '<') depth++;
+          else if (this.peek().value === '>') depth--;
           typeStr += this.advance().value;
         }
-        if (this.peek().value === '>') typeStr += this.advance().value;
       } else {
         typeStr += this.advance().value;
       }
     }
     return typeStr;
+  }
+
+  private parseDeclarator(): {
+    name: string;
+    isArray?: boolean;
+    arraySize?: BaseASTNode;
+    initializer?: BaseASTNode;
+  } {
+    const name = this.advance().value;
+    let isArray = false;
+    let arraySize: BaseASTNode | undefined;
+    if (this.match('[')) {
+      isArray = true;
+      if (this.peek().value !== ']') {
+        arraySize = this.parseExpression();
+      }
+      this.expect(']');
+    }
+    let initializer: BaseASTNode | undefined;
+    if (this.match('=')) {
+      initializer = this.parseExpression();
+    }
+    return { name, isArray, arraySize, initializer };
   }
 
   private parseFunctionOrVar(): BaseASTNode {
@@ -163,11 +215,39 @@ export class Parser {
       } as FunctionDeclNode;
     }
 
-    // Top-level variable declaration
+    // Top-level variable declaration(s)
+    let isArray = false;
+    let arraySize: BaseASTNode | undefined;
+    if (this.match('[')) {
+      isArray = true;
+      if (this.peek().value !== ']') {
+        arraySize = this.parseExpression();
+      }
+      this.expect(']');
+    }
+
     let initializer: BaseASTNode | undefined;
     if (this.match('=')) {
       initializer = this.parseExpression();
     }
+
+    const firstDecl: {
+      name: string;
+      isArray?: boolean;
+      arraySize?: BaseASTNode;
+      initializer?: BaseASTNode;
+    } = { name, isArray, arraySize, initializer };
+    const declarations: Array<{
+      name: string;
+      isArray?: boolean;
+      arraySize?: BaseASTNode;
+      initializer?: BaseASTNode;
+    }> = [firstDecl];
+
+    while (this.match(',')) {
+      declarations.push(this.parseDeclarator());
+    }
+
     this.match(';');
 
     return {
@@ -176,6 +256,9 @@ export class Parser {
       varType: typeStr,
       name,
       initializer,
+      isArray,
+      arraySize,
+      declarations,
     } as VariableDeclNode;
   }
 
@@ -213,6 +296,22 @@ export class Parser {
       return this.parseWhile();
     }
 
+    if (token.value === 'for') {
+      return this.parseFor();
+    }
+
+    if (token.value === 'break') {
+      this.advance();
+      if (!this.match(';')) this.expect(';');
+      return { type: 'BreakStatement', line: token.line } as BreakStatementNode;
+    }
+
+    if (token.value === 'continue') {
+      this.advance();
+      if (!this.match(';')) this.expect(';');
+      return { type: 'ContinueStatement', line: token.line } as ContinueStatementNode;
+    }
+
     if (token.value === 'return') {
       return this.parseReturn();
     }
@@ -227,6 +326,11 @@ export class Parser {
       'char',
       'float',
       'double',
+      'long',
+      'const',
+      'static',
+      'unsigned',
+      'signed',
       'TreeNode',
       'Node',
       'ListNode',
@@ -280,6 +384,106 @@ export class Parser {
     };
   }
 
+  private parseFor(): BaseASTNode {
+    const forToken = this.advance(); // 'for'
+    this.expect('(');
+
+    // Look ahead to detect range-based for loop:
+    // e.g. for (auto i: tree[node]) or for (auto i : tree[node]) or for (int x : vec)
+    const savedPos = this.pos;
+    let isRangeFor = false;
+    let rangeVarType = '';
+    let rangeVarName = '';
+
+    try {
+      const typeStr = this.parseTypeString();
+      if (this.peek().type === 'IDENTIFIER' || this.peek().type === 'KEYWORD') {
+        const idToken = this.advance();
+        if (this.peek().value === ':') {
+          isRangeFor = true;
+          rangeVarType = typeStr;
+          rangeVarName = idToken.value;
+        }
+      }
+    } catch {
+      // not a range for
+    }
+
+    if (isRangeFor) {
+      this.expect(':');
+      const iterable = this.parseExpression();
+      this.expect(')');
+      const body = this.peek().value === '{' ? this.parseBlock() : this.parseStatement();
+      return {
+        type: 'RangeForStatement',
+        line: forToken.line,
+        varType: rangeVarType,
+        varName: rangeVarName,
+        iterable,
+        body,
+      } as RangeForStatementNode;
+    }
+
+    // Reset position for standard 3-clause for loop
+    this.pos = savedPos;
+
+    // 1. init: e.g. int i = 0; or i = 0; or ;
+    let init: BaseASTNode | undefined;
+    if (this.peek().value === ';') {
+      this.advance();
+    } else {
+      const KNOWN_TYPE_NAMES = new Set([
+        'int',
+        'void',
+        'bool',
+        'string',
+        'auto',
+        'char',
+        'float',
+        'double',
+        'long',
+        'const',
+        'TreeNode',
+        'Node',
+        'ListNode',
+        'queue',
+        'vector',
+        'stack',
+      ]);
+      if (KNOWN_TYPE_NAMES.has(this.peek().value)) {
+        init = this.parseVarDecl(true);
+      } else {
+        init = this.parseAssignmentOrExpr(true);
+      }
+    }
+
+    // 2. condition: e.g. i < n - 1; or ;
+    let condition: BaseASTNode | undefined;
+    if (this.peek().value !== ';') {
+      condition = this.parseExpression();
+    }
+    this.expect(';');
+
+    // 3. update: e.g. i++ or i += 1 or i = i + 1
+    let update: BaseASTNode | undefined;
+    if (this.peek().value !== ')') {
+      update = this.parseExpression();
+    }
+    this.expect(')');
+
+    // 4. body
+    const body = this.peek().value === '{' ? this.parseBlock() : this.parseStatement();
+
+    return {
+      type: 'ForStatement',
+      line: forToken.line,
+      init,
+      condition,
+      update,
+      body,
+    } as ForStatementNode;
+  }
+
   private parseReturn(): ReturnStatementNode {
     const token = this.advance(); // 'return'
     let argument: BaseASTNode | undefined;
@@ -294,32 +498,52 @@ export class Parser {
     };
   }
 
-  private parseVarDecl(): VariableDeclNode {
+  private parseVarDecl(consumeSemicolon: boolean = true): VariableDeclNode {
     const startLine = this.peek().line;
     const typeStr = this.parseTypeString();
-    const name = this.advance().value;
-    let initializer: BaseASTNode | undefined;
+    const firstDecl = this.parseDeclarator();
+    const declarations = [firstDecl];
 
-    if (this.match('=')) {
-      initializer = this.parseExpression();
+    while (this.match(',')) {
+      declarations.push(this.parseDeclarator());
     }
-    if (!this.match(';')) this.expect(';');
+
+    if (consumeSemicolon && !this.match(';')) {
+      this.expect(';');
+    }
 
     return {
       type: 'VariableDeclaration',
       line: startLine,
       varType: typeStr,
-      name,
-      initializer,
+      name: firstDecl.name,
+      initializer: firstDecl.initializer,
+      isArray: firstDecl.isArray,
+      arraySize: firstDecl.arraySize,
+      declarations,
     };
   }
 
-  private parseAssignmentOrExpr(): BaseASTNode {
+  private parseAssignmentOrExpr(consumeSemicolon: boolean = true): BaseASTNode {
     const expr = this.parseExpression();
+
+    const compoundOps = ['+=', '-=', '*=', '/=', '%='];
+    if (compoundOps.includes(this.peek().value)) {
+      const op = this.advance().value as '+=' | '-=' | '*=' | '/=' | '%=';
+      const val = this.parseExpression();
+      if (consumeSemicolon && !this.match(';')) this.expect(';');
+      return {
+        type: 'CompoundAssignmentStatement',
+        line: expr.line,
+        target: expr,
+        operator: op,
+        value: val,
+      } as CompoundAssignmentNode;
+    }
 
     if (this.match('=')) {
       const val = this.parseExpression();
-      if (!this.match(';')) this.expect(';');
+      if (consumeSemicolon && !this.match(';')) this.expect(';');
 
       if (expr.type === 'Identifier') {
         return {
@@ -337,12 +561,21 @@ export class Parser {
           property: mem.property,
           value: val,
         } as MemberAssignmentNode;
+      } else if (expr.type === 'IndexAccessExpression') {
+        const idx = expr as IndexAccessNode;
+        return {
+          type: 'IndexAssignmentStatement',
+          line: expr.line,
+          object: idx.object,
+          index: idx.index,
+          value: val,
+        } as IndexAssignmentNode;
       } else {
         throw new Error(`Invalid assignment target at line ${expr.line}`);
       }
     }
 
-    if (!this.match(';')) this.expect(';');
+    if (consumeSemicolon && !this.match(';')) this.expect(';');
     return {
       type: 'ExpressionStatement',
       line: expr.line,
@@ -407,6 +640,19 @@ export class Parser {
 
   private parsePrimary(): BaseASTNode {
     const token = this.peek();
+
+    // Prefix ++ and --
+    if (token.value === '++' || token.value === '--') {
+      this.advance();
+      const argument = this.parsePrimary();
+      return {
+        type: 'UpdateExpression',
+        line: token.line,
+        operator: token.value as '++' | '--',
+        argument,
+        prefix: true,
+      } as UpdateExpressionNode;
+    }
 
     // Unary operators (!, -, +, ~)
     if (token.value === '!' || token.value === '~' || token.value === '+' || token.value === '-') {
@@ -502,6 +748,19 @@ export class Parser {
 
   private parsePostfix(expr: BaseASTNode): BaseASTNode {
     while (true) {
+      // Postfix ++ and --
+      if (this.peek().value === '++' || this.peek().value === '--') {
+        const op = this.advance().value as '++' | '--';
+        expr = {
+          type: 'UpdateExpression',
+          line: expr.line,
+          operator: op,
+          argument: expr,
+          prefix: false,
+        } as UpdateExpressionNode;
+        continue;
+      }
+
       // Member access e.g. root->left or q.front()
       if (this.peek().value === '->' || this.peek().value === '.') {
         this.advance();
@@ -512,6 +771,20 @@ export class Parser {
           object: expr,
           property: prop,
         } as MemberAccessNode;
+        continue;
+      }
+
+      // Array subscript e.g. tree[node] or arr[i]
+      if (this.peek().value === '[') {
+        this.advance(); // '['
+        const index = this.parseExpression();
+        this.expect(']');
+        expr = {
+          type: 'IndexAccessExpression',
+          line: expr.line,
+          object: expr,
+          index,
+        } as IndexAccessNode;
         continue;
       }
 

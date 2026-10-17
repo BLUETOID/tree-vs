@@ -40,11 +40,19 @@ export function computeTreeLayout(
   const parentMap = new Map<string, string>();
 
   for (const [id, data] of Object.entries(nodesMap)) {
-    if (data.left && allIds.has(data.left)) {
-      parentMap.set(data.left, id);
-    }
-    if (data.right && allIds.has(data.right)) {
-      parentMap.set(data.right, id);
+    if (data.children && data.children.length > 0) {
+      for (const chId of data.children) {
+        if (allIds.has(chId)) {
+          parentMap.set(chId, id);
+        }
+      }
+    } else {
+      if (data.left && allIds.has(data.left)) {
+        parentMap.set(data.left, id);
+      }
+      if (data.right && allIds.has(data.right)) {
+        parentMap.set(data.right, id);
+      }
     }
   }
 
@@ -72,6 +80,23 @@ export function computeTreeLayout(
 
     const node = nodesMap[id];
     if (!node) return NODE_WIDTH + NODE_GAP_X;
+
+    const hasChildren = Boolean(node.children && node.children.length > 0);
+    if (hasChildren) {
+      const validChildren = node.children!.filter((c) => allIds.has(c));
+      if (validChildren.length === 0) {
+        const w = NODE_WIDTH + NODE_GAP_X;
+        subtreeWidths.set(id, w);
+        return w;
+      }
+      let sumWidth = 0;
+      for (const ch of validChildren) {
+        sumWidth += computeBinarySubtreeWidth(ch);
+      }
+      const totalWidth = Math.max(NODE_WIDTH + NODE_GAP_X, sumWidth);
+      subtreeWidths.set(id, totalWidth);
+      return totalWidth;
+    }
 
     const hasLeft = Boolean(node.left && allIds.has(node.left));
     const hasRight = Boolean(node.right && allIds.has(node.right));
@@ -113,6 +138,33 @@ export function computeTreeLayout(
 
     const subWidth = subtreeWidths.get(id) || (NODE_WIDTH + NODE_GAP_X);
     const y = 60 + depth * LEVEL_HEIGHT_Y;
+
+    const hasChildren = Boolean(node.children && node.children.length > 0);
+    if (hasChildren) {
+      const validChildren = node.children!.filter((c) => allIds.has(c));
+      if (validChildren.length === 0) {
+        const x = startX + subWidth / 2;
+        positions.set(id, { x, y });
+        depths.set(id, depth);
+        return;
+      }
+      let currX = startX;
+      const childPositions: number[] = [];
+      for (const ch of validChildren) {
+        const chW = subtreeWidths.get(ch) || (NODE_WIDTH + NODE_GAP_X);
+        layoutBinarySubtree(ch, currX, depth + 1);
+        const cPos = positions.get(ch);
+        if (cPos) childPositions.push(cPos.x);
+        currX += chW;
+      }
+      const parentX =
+        childPositions.length > 0
+          ? (childPositions[0] + childPositions[childPositions.length - 1]) / 2
+          : startX + subWidth / 2;
+      positions.set(id, { x: parentX, y });
+      depths.set(id, depth);
+      return;
+    }
 
     const hasLeft = Boolean(node.left && allIds.has(node.left));
     const hasRight = Boolean(node.right && allIds.has(node.right));
@@ -209,42 +261,63 @@ export function computeTreeLayout(
       rank: data.rank,
     });
 
-    // Left child edge
-    if (data.left && positions.has(data.left)) {
-      const childPos = positions.get(data.left)!;
-      let edgeState: TreeEdgeState = 'default';
-      if (data.state === 'active' || data.state === 'comparing') edgeState = 'active';
+    if (data.children && data.children.length > 0) {
+      for (const chId of data.children) {
+        if (positions.has(chId)) {
+          const childPos = positions.get(chId)!;
+          let edgeState: TreeEdgeState = 'default';
+          if (data.state === 'active' || data.state === 'comparing') edgeState = 'active';
 
-      layoutEdges.push({
-        id: `e-${id}-${data.left}`,
-        from: id,
-        to: data.left,
-        x1: pos.x,
-        y1: pos.y + NODE_RADIUS,
-        x2: childPos.x,
-        y2: childPos.y - NODE_RADIUS,
-        label: 'L',
-        state: edgeState,
-      });
-    }
+          layoutEdges.push({
+            id: `e-${id}-${chId}`,
+            from: id,
+            to: chId,
+            x1: pos.x,
+            y1: pos.y + NODE_RADIUS,
+            x2: childPos.x,
+            y2: childPos.y - NODE_RADIUS,
+            state: edgeState,
+          });
+        }
+      }
+    } else {
+      // Left child edge
+      if (data.left && positions.has(data.left)) {
+        const childPos = positions.get(data.left)!;
+        let edgeState: TreeEdgeState = 'default';
+        if (data.state === 'active' || data.state === 'comparing') edgeState = 'active';
 
-    // Right child edge
-    if (data.right && positions.has(data.right)) {
-      const childPos = positions.get(data.right)!;
-      let edgeState: TreeEdgeState = 'default';
-      if (data.state === 'active' || data.state === 'comparing') edgeState = 'active';
+        layoutEdges.push({
+          id: `e-${id}-${data.left}`,
+          from: id,
+          to: data.left,
+          x1: pos.x,
+          y1: pos.y + NODE_RADIUS,
+          x2: childPos.x,
+          y2: childPos.y - NODE_RADIUS,
+          label: 'L',
+          state: edgeState,
+        });
+      }
 
-      layoutEdges.push({
-        id: `e-${id}-${data.right}`,
-        from: id,
-        to: data.right,
-        x1: pos.x,
-        y1: pos.y + NODE_RADIUS,
-        x2: childPos.x,
-        y2: childPos.y - NODE_RADIUS,
-        label: 'R',
-        state: edgeState,
-      });
+      // Right child edge
+      if (data.right && positions.has(data.right)) {
+        const childPos = positions.get(data.right)!;
+        let edgeState: TreeEdgeState = 'default';
+        if (data.state === 'active' || data.state === 'comparing') edgeState = 'active';
+
+        layoutEdges.push({
+          id: `e-${id}-${data.right}`,
+          from: id,
+          to: data.right,
+          x1: pos.x,
+          y1: pos.y + NODE_RADIUS,
+          x2: childPos.x,
+          y2: childPos.y - NODE_RADIUS,
+          label: 'R',
+          state: edgeState,
+        });
+      }
     }
   }
 
