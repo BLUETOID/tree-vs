@@ -155,9 +155,24 @@ export class Parser {
         typeStr += this.advance().value;
         let depth = 1;
         while (this.peek().type !== 'EOF' && depth > 0) {
-          if (this.peek().value === '<') depth++;
-          else if (this.peek().value === '>') depth--;
-          typeStr += this.advance().value;
+          if (this.peek().value === '<') {
+            depth++;
+            typeStr += this.advance().value;
+          } else if (this.peek().value === '>>') {
+            if (depth >= 2) {
+              depth -= 2;
+              typeStr += this.advance().value;
+            } else {
+              depth--;
+              typeStr += '>';
+              this.peek().value = '>';
+            }
+          } else if (this.peek().value === '>') {
+            depth--;
+            typeStr += this.advance().value;
+          } else {
+            typeStr += this.advance().value;
+          }
         }
       } else {
         typeStr += this.advance().value;

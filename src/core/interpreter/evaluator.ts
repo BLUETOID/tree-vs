@@ -174,19 +174,29 @@ export class Evaluator {
             } else if (decl.varType.startsWith('vector')) {
               if (d.constructorArgs && d.constructorArgs.length > 0) {
                 const size = Number(this.evaluateExpression(d.constructorArgs[0])) || 0;
-                let defaultVal: any = 0;
-                if (d.constructorArgs.length > 1) {
-                  defaultVal = this.evaluateExpression(d.constructorArgs[1]);
-                } else if (decl.varType.includes('bool')) {
-                  defaultVal = false;
-                } else if (decl.varType.includes('string')) {
-                  defaultVal = '';
-                }
                 const items: any[] = [];
-                for (let i = 0; i < size; i++) items.push(defaultVal);
+                if (decl.varType.includes('<vector')) {
+                  for (let i = 0; i < size; i++) items.push(createVector());
+                } else {
+                  let defaultVal: any = 0;
+                  if (d.constructorArgs.length > 1) {
+                    defaultVal = this.evaluateExpression(d.constructorArgs[1]);
+                  } else if (decl.varType.includes('bool')) {
+                    defaultVal = false;
+                  } else if (decl.varType.includes('string')) {
+                    defaultVal = '';
+                  }
+                  for (let i = 0; i < size; i++) items.push(defaultVal);
+                }
                 val = createVector(items);
+                if (decl.varType.includes('<vector')) {
+                  (val as any).__is2DVector = true;
+                }
               } else {
                 val = createVector();
+                if (decl.varType.includes('<vector')) {
+                  (val as any).__is2DVector = true;
+                }
               }
             } else if (d.constructorArgs && d.constructorArgs.length > 0) {
               val = this.evaluateExpression(d.constructorArgs[0]);
@@ -685,19 +695,29 @@ export class Evaluator {
           } else if (decl.varType.startsWith('vector')) {
             if (d.constructorArgs && d.constructorArgs.length > 0) {
               const size = Number(this.evaluateExpression(d.constructorArgs[0])) || 0;
-              let defaultVal: any = 0;
-              if (d.constructorArgs.length > 1) {
-                defaultVal = this.evaluateExpression(d.constructorArgs[1]);
-              } else if (decl.varType.includes('bool')) {
-                defaultVal = false;
-              } else if (decl.varType.includes('string')) {
-                defaultVal = '';
-              }
               const items: any[] = [];
-              for (let i = 0; i < size; i++) items.push(defaultVal);
+              if (decl.varType.includes('<vector')) {
+                for (let i = 0; i < size; i++) items.push(createVector());
+              } else {
+                let defaultVal: any = 0;
+                if (d.constructorArgs.length > 1) {
+                  defaultVal = this.evaluateExpression(d.constructorArgs[1]);
+                } else if (decl.varType.includes('bool')) {
+                  defaultVal = false;
+                } else if (decl.varType.includes('string')) {
+                  defaultVal = '';
+                }
+                for (let i = 0; i < size; i++) items.push(defaultVal);
+              }
               val = createVector(items);
+              if (decl.varType.includes('<vector')) {
+                (val as any).__is2DVector = true;
+              }
             } else {
               val = createVector();
+              if (decl.varType.includes('<vector')) {
+                (val as any).__is2DVector = true;
+              }
             }
           } else if (d.constructorArgs && d.constructorArgs.length > 0) {
             val = this.evaluateExpression(d.constructorArgs[0]);
@@ -785,6 +805,12 @@ export class Evaluator {
           const res = this.executeStatement(forStmt.body);
           if (res && res.__return__) return res;
           if (res && res.__break__) break;
+          if (res && res.__continue__) {
+            if (forStmt.update) {
+              this.evaluateExpression(forStmt.update);
+            }
+            continue;
+          }
           if (forStmt.update) {
             this.evaluateExpression(forStmt.update);
           }
@@ -805,6 +831,7 @@ export class Evaluator {
           const res = this.executeStatement(rangeFor.body);
           if (res && res.__return__) return res;
           if (res && res.__break__) break;
+          if (res && res.__continue__) continue;
         }
         return;
       }
@@ -873,6 +900,8 @@ export class Evaluator {
           this.recordStep(stmt.line, `Loop condition true, executing iteration`);
           const res = this.executeStatement(whileStmt.body);
           if (res && res.__return__) return res;
+          if (res && res.__break__) break;
+          if (res && res.__continue__) continue;
         }
         return;
       }
@@ -891,7 +920,7 @@ export class Evaluator {
         const block = stmt as BlockStatementNode;
         for (const s of block.body) {
           const res = this.executeStatement(s);
-          if (res && res.__return__) return res;
+          if (res && (res.__return__ || res.__break__ || res.__continue__)) return res;
         }
         return;
       }
@@ -959,6 +988,9 @@ export class Evaluator {
             return obj.map.get(idx);
           }
           if (Array.isArray(obj)) {
+            if (obj[idx] === undefined && (obj as any).__is2DVector) {
+              obj[idx] = createVector();
+            }
             return obj[idx];
           }
           return (obj as any)[idx];

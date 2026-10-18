@@ -210,6 +210,73 @@ int main() {
     expect(layout.nodes.length).toBe(8);
     expect(layout.edges.length).toBe(7);
   });
+
+  it('runs vector<vector<int>> path sum code', async () => {
+    const code = `#include <bits/stdc++.h>
+using namespace std;
+
+bool dfs(int node, int parent, long long cur, int target, vector<vector<int>> &adj) {
+    cur += node;                       // node's value = its label
+
+    bool isLeaf = true;
+    for (int nxt : adj[node]) {
+        if (nxt == parent) continue;
+        isLeaf = false;
+        if (dfs(nxt, node, cur, target, adj)) return true;
+    }
+    return isLeaf && cur == target;
+}
+
+bool solution(int n, int target_sum, vector<vector<int>> &adj) {
+    int root = 1;                      // adj is 1-indexed (size n+1)
+    return dfs(root, -1, 0, target_sum, adj);
+}
+
+int main() {
+    int n, k;
+    cin >> n >> k;
+
+    vector<vector<int>> adj(n + 1);    // local, 1-indexed
+    for (int i = 1; i < n; i++) {
+        int a, b;
+        cin >> a >> b;
+        adj[a].push_back(b);
+        adj[b].push_back(a);
+    }
+    bool ans = solution(n, k, adj);
+
+    if(ans){
+        cout<<"TRUE";
+    }
+    else{
+        cout<<"FALSE";
+    }
+}`;
+
+    const input = `4 7
+1 2
+1 3
+2 4`;
+
+    const result = runCppTreeInterpreter(code, input);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout).toBe('TRUE');
+    expect(result.trace.length).toBeGreaterThan(10);
+
+    const lastEvent = result.trace[result.trace.length - 1];
+    expect(lastEvent.treeSnapshot).toBeDefined();
+    expect(lastEvent.treeSnapshot!.rootId).toBe('1');
+    const layout = computeTreeLayout(lastEvent.treeSnapshot!.nodes, lastEvent.treeSnapshot!.rootId);
+    expect(layout.nodes.length).toBe(4);
+    expect(layout.edges.length).toBe(3);
+
+    // Test with a target sum that doesn't exist (target = 10 -> FALSE)
+    const falseInput = `4 10\n1 2\n1 3\n2 4`;
+    const falseResult = runCppTreeInterpreter(code, falseInput);
+    expect(falseResult.error).toBeUndefined();
+    expect(falseResult.stdout).toBe('FALSE');
+  });
 });
+
 
 
