@@ -29,12 +29,20 @@ import type {
   NewExpressionNode,
   IdentifierNode,
   LiteralNode,
+  ArrayLiteralNode,
+  StructDeclNode,
+  VariableDeclarator,
 } from './ast';
 import type { TraceEvent, InterpreterResult } from '../../types/interpreter';
 import type { TreeNodeData, TreeStepSnapshot, PointerMarker } from '../../types/tree';
 
 interface QueueObject {
   __type: 'queue';
+  items: any[];
+}
+
+interface StackObject {
+  __type: 'stack';
   items: any[];
 }
 
@@ -64,6 +72,8 @@ function createVector(initialItems: any[] = []): any[] {
   return arr;
 }
 
+
+
 interface Frame {
   name: string;
   args: Record<string, any>;
@@ -74,6 +84,7 @@ interface Frame {
 
 export class Evaluator {
   private functions: Map<string, FunctionDeclNode> = new Map();
+  private structs: Map<string, StructDeclNode> = new Map();
   private heap: Map<string, TreeNodeData> = new Map();
   private heapCounter: number = 0;
   private callStack: Frame[] = [];
@@ -93,8 +104,125 @@ export class Evaluator {
       if (stmt.type === 'FunctionDeclaration') {
         const fn = stmt as FunctionDeclNode;
         this.functions.set(fn.name, fn);
+      } else if (stmt.type === 'StructDeclaration') {
+        const s = stmt as StructDeclNode;
+        this.structs.set(s.name, s);
       }
     }
+  }
+
+  private initVariableValue(varType: string, d: VariableDeclarator): any {
+    const isVector = varType.startsWith('vector') || varType.startsWith('std::vector') || varType.startsWith('std:: vector');
+    const isPair = varType.startsWith('pair') || varType.startsWith('std::pair') || varType.startsWith('std:: pair');
+    const isQueue = varType.startsWith('queue') || varType.startsWith('std::queue');
+    const isStack = varType.startsWith('stack') || varType.startsWith('std::stack');
+
+    if (isQueue) {
+      return { __type: 'queue', items: [] } as QueueObject;
+    }
+    if (isStack) {
+      return { __type: 'stack', items: [] } as StackObject;
+    }
+
+    if (isVector) {
+      const vectorDepth = (varType.match(/vector/g) || []).length;
+      if (d.initializer) {
+        const initVal = this.evaluateExpression(d.initializer);
+        const vec = Array.isArray(initVal) ? createVector(initVal) : createVector();
+        if (vectorDepth > 1) {
+          (vec as any).__is2DVector = true;
+          (vec as any).__nestingDepth = vectorDepth;
+        }
+        return vec;
+      }
+      if (d.constructorArgs && d.constructorArgs.length > 0) {
+        const size = Number(this.evaluateExpression(d.constructorArgs[0])) || 0;
+        const items: any[] = [];
+        if (vectorDepth > 1) {
+          for (let i = 0; i < size; i++) {
+            const inner = createVector();
+            if (vectorDepth - 1 > 1) {
+              (inner as any).__is2DVector = true;
+              (inner as any).__nestingDepth = vectorDepth - 1;
+            }
+            items.push(inner);
+          }
+        } else {
+          let defaultVal: any = 0;
+          if (d.constructorArgs.length > 1) {
+            defaultVal = this.evaluateExpression(d.constructorArgs[1]);
+          } else if (varType.includes('bool')) {
+            defaultVal = false;
+          } else if (varType.includes('string')) {
+            defaultVal = '';
+          } else if (varType.includes('pair')) {
+            defaultVal = { first: 0, second: 0 };
+          }
+          for (let i = 0; i < size; i++) items.push(defaultVal);
+        }
+        const val = createVector(items);
+        if (vectorDepth > 1) {
+          (val as any).__is2DVector = true;
+          (val as any).__nestingDepth = vectorDepth;
+        }
+        return val;
+      }
+      const val = createVector();
+      if (vectorDepth > 1) {
+        (val as any).__is2DVector = true;
+        (val as any).__nestingDepth = vectorDepth;
+      }
+      return val;
+    }
+
+    if (isPair) {
+      if (d.initializer) {
+        const initVal = this.evaluateExpression(d.initializer);
+        if (Array.isArray(initVal)) {
+          return { first: initVal[0], second: initVal[1] };
+        }
+        if (typeof initVal === 'object' && initVal !== null) {
+          return initVal;
+        }
+        return { first: 0, second: 0 };
+      }
+      const firstVal = varType.includes('<vector') || varType.includes('<std::vector') ? createVector() : 0;
+      const secondVal =
+        varType.includes(',vector') ||
+        varType.includes(', vector') ||
+        varType.includes(',std::vector') ||
+        varType.includes(', std::vector')
+          ? createVector()
+          : 0;
+      return { first: firstVal, second: secondVal };
+    }
+
+    if (this.structs.has(varType)) {
+      const structDecl = this.structs.get(varType)!;
+      const obj: Record<string, any> = {};
+      for (const mem of structDecl.members) {
+        obj[mem.name] = this.initVariableValue(mem.type, { name: mem.name });
+      }
+      return obj;
+    }
+
+    if (d.constructorArgs && d.constructorArgs.length > 0) {
+      return this.evaluateExpression(d.constructorArgs[0]);
+    }
+    if (d.initializer) {
+      return this.evaluateExpression(d.initializer);
+    }
+    if (
+      varType === 'int' ||
+      varType === 'long' ||
+      varType === 'double' ||
+      varType === 'float'
+    ) {
+      return 0;
+    }
+    if (varType === 'bool') return false;
+    if (varType === 'string') return '';
+    return undefined;
   }
 
   private readStdinToken(): string {
@@ -166,42 +294,13 @@ export class Evaluator {
             if (d.isArray) {
               if (decl.varType.includes('vector')) {
                 val = { __type: 'vector_array', map: new Map<any, any[]>() } as VectorArrayObject;
+              } else if (d.initializer) {
+                val = this.evaluateExpression(d.initializer);
               } else {
                 val = [];
               }
-            } else if (decl.varType.startsWith('queue')) {
-              val = { __type: 'queue', items: [] } as QueueObject;
-            } else if (decl.varType.startsWith('vector')) {
-              if (d.constructorArgs && d.constructorArgs.length > 0) {
-                const size = Number(this.evaluateExpression(d.constructorArgs[0])) || 0;
-                const items: any[] = [];
-                if (decl.varType.includes('<vector')) {
-                  for (let i = 0; i < size; i++) items.push(createVector());
-                } else {
-                  let defaultVal: any = 0;
-                  if (d.constructorArgs.length > 1) {
-                    defaultVal = this.evaluateExpression(d.constructorArgs[1]);
-                  } else if (decl.varType.includes('bool')) {
-                    defaultVal = false;
-                  } else if (decl.varType.includes('string')) {
-                    defaultVal = '';
-                  }
-                  for (let i = 0; i < size; i++) items.push(defaultVal);
-                }
-                val = createVector(items);
-                if (decl.varType.includes('<vector')) {
-                  (val as any).__is2DVector = true;
-                }
-              } else {
-                val = createVector();
-                if (decl.varType.includes('<vector')) {
-                  (val as any).__is2DVector = true;
-                }
-              }
-            } else if (d.constructorArgs && d.constructorArgs.length > 0) {
-              val = this.evaluateExpression(d.constructorArgs[0]);
-            } else if (d.initializer) {
-              val = this.evaluateExpression(d.initializer);
+            } else {
+              val = this.initVariableValue(decl.varType, d);
             }
             this.globals[d.name] = val;
           }
@@ -333,6 +432,16 @@ export class Evaluator {
       'total',
       'val',
       'value',
+      'cur',
+      'target_sum',
+      'targetsum',
+      'runningsum',
+      'running_sum',
+      'acc',
+      'accum',
+      'diff',
+      'difference',
+      'isleaf',
       'timer',
       'tin',
       'tout',
@@ -351,6 +460,8 @@ export class Evaluator {
       'child',
       'neighbour',
       'neighbor',
+      'nxt',
+      'next',
       'src',
       'dest',
       'target',
@@ -398,7 +509,7 @@ export class Evaluator {
             color = '#ec4899';
           } else if (varName === 'res') {
             color = '#10b981';
-          } else if (varName === 'v' || varName === 'child' || varName === 'neighbour' || varName === 'neighbor') {
+          } else if (varName === 'v' || varName === 'child' || varName === 'neighbour' || varName === 'neighbor' || varName === 'nxt' || varName === 'next') {
             color = '#34d399';
           } else if (varName === 'u' || varName === 'src') {
             color = '#60a5fa';
@@ -687,53 +798,13 @@ export class Evaluator {
           if (d.isArray) {
             if (decl.varType.includes('vector')) {
               val = { __type: 'vector_array', map: new Map<any, any[]>() } as VectorArrayObject;
+            } else if (d.initializer) {
+              val = this.evaluateExpression(d.initializer);
             } else {
               val = [];
             }
-          } else if (decl.varType.startsWith('queue')) {
-            val = { __type: 'queue', items: [] } as QueueObject;
-          } else if (decl.varType.startsWith('vector')) {
-            if (d.constructorArgs && d.constructorArgs.length > 0) {
-              const size = Number(this.evaluateExpression(d.constructorArgs[0])) || 0;
-              const items: any[] = [];
-              if (decl.varType.includes('<vector')) {
-                for (let i = 0; i < size; i++) items.push(createVector());
-              } else {
-                let defaultVal: any = 0;
-                if (d.constructorArgs.length > 1) {
-                  defaultVal = this.evaluateExpression(d.constructorArgs[1]);
-                } else if (decl.varType.includes('bool')) {
-                  defaultVal = false;
-                } else if (decl.varType.includes('string')) {
-                  defaultVal = '';
-                }
-                for (let i = 0; i < size; i++) items.push(defaultVal);
-              }
-              val = createVector(items);
-              if (decl.varType.includes('<vector')) {
-                (val as any).__is2DVector = true;
-              }
-            } else {
-              val = createVector();
-              if (decl.varType.includes('<vector')) {
-                (val as any).__is2DVector = true;
-              }
-            }
-          } else if (d.constructorArgs && d.constructorArgs.length > 0) {
-            val = this.evaluateExpression(d.constructorArgs[0]);
-          } else if (d.initializer) {
-            val = this.evaluateExpression(d.initializer);
-          } else if (
-            decl.varType === 'int' ||
-            decl.varType === 'long' ||
-            decl.varType === 'double' ||
-            decl.varType === 'float'
-          ) {
-            val = 0;
-          } else if (decl.varType === 'bool') {
-            val = false;
-          } else if (decl.varType === 'string') {
-            val = '';
+          } else {
+            val = this.initVariableValue(decl.varType, d);
           }
           frame.locals[d.name] = val;
           this.recordStep(
@@ -771,6 +842,42 @@ export class Evaluator {
           }
           this.setVariableValue(id, newVal);
           this.recordStep(stmt.line, `${id} ${comp.operator} ${val} -> ${newVal}`);
+        } else if (comp.target.type === 'IndexAccessExpression') {
+          const idxExpr = comp.target as IndexAccessNode;
+          const obj = this.evaluateExpression(idxExpr.object);
+          const idx = this.evaluateExpression(idxExpr.index);
+          const currentVal =
+            obj && typeof obj === 'object'
+              ? obj.__type === 'vector_array'
+                ? obj.map.get(idx) || 0
+                : obj[idx] || 0
+              : 0;
+          let newVal = currentVal;
+          if (comp.operator === '+=') newVal = currentVal + val;
+          else if (comp.operator === '-=') newVal = currentVal - val;
+          else if (comp.operator === '*=') newVal = currentVal * val;
+          else if (comp.operator === '/=') {
+            if (val === 0) throw new Error(`Runtime error: Division by zero at line ${stmt.line}`);
+            newVal = Math.trunc(currentVal / val);
+          } else if (comp.operator === '%=') {
+            if (val === 0) throw new Error(`Runtime error: Modulo by zero at line ${stmt.line}`);
+            newVal = currentVal % val;
+          }
+          if (obj && typeof obj === 'object') {
+            if (obj.__type === 'vector_array') obj.map.set(idx, newVal);
+            else obj[idx] = newVal;
+          }
+          this.recordStep(stmt.line, `[${idx}] ${comp.operator} ${val} -> ${newVal}`);
+        } else if (comp.target.type === 'MemberAccessExpression') {
+          const mem = comp.target as MemberAccessNode;
+          const obj = this.evaluateExpression(mem.object);
+          const prop = mem.property;
+          const currentVal = obj && typeof obj === 'object' ? obj[prop] || 0 : 0;
+          let newVal = currentVal;
+          if (comp.operator === '+=') newVal = currentVal + val;
+          else if (comp.operator === '-=') newVal = currentVal - val;
+          else if (comp.operator === '*=') newVal = currentVal * val;
+          if (obj && typeof obj === 'object') obj[prop] = newVal;
         }
         return;
       }
@@ -875,6 +982,9 @@ export class Evaluator {
             stmt.line,
             `Assigned node ${node.val}->${prop} = ${typeof val === 'string' && this.heap.has(val) ? `Node(${this.heap.get(val)!.val})` : val}`
           );
+        } else if (typeof objVal === 'object' && objVal !== null) {
+          (objVal as any)[prop] = val;
+          this.recordStep(stmt.line, `Assigned member .${prop} = ${val}`);
         } else {
           throw new Error(`Invalid member assignment on non-heap object at line ${stmt.line}`);
         }
@@ -945,9 +1055,9 @@ export class Evaluator {
         if (id === 'nullptr' || id === 'NULL') return null;
         if (id === 'true') return true;
         if (id === 'false') return false;
-        if (id === 'endl') return 'endl';
-        if (id === 'cout') return 'cout';
-        if (id === 'cin') return 'cin';
+        if (id === 'endl' || id === 'std::endl') return 'endl';
+        if (id === 'cout' || id === 'std::cout') return 'cout';
+        if (id === 'cin' || id === 'std::cin') return 'cin';
         if (id === 'INT_MIN' || id === 'LONG_MIN') return -2147483648;
         if (id === 'INT_MAX' || id === 'LONG_MAX') return 2147483647;
 
@@ -988,8 +1098,18 @@ export class Evaluator {
             return obj.map.get(idx);
           }
           if (Array.isArray(obj)) {
-            if (obj[idx] === undefined && (obj as any).__is2DVector) {
-              obj[idx] = createVector();
+            if (obj[idx] === undefined) {
+              if ((obj as any).__is2DVector) {
+                const depth = (obj as any).__nestingDepth || 2;
+                const inner = createVector();
+                if (depth - 1 > 1) {
+                  (inner as any).__is2DVector = true;
+                  (inner as any).__nestingDepth = depth - 1;
+                }
+                obj[idx] = inner;
+              } else {
+                return 0;
+              }
             }
             return obj[idx];
           }
@@ -1032,6 +1152,13 @@ export class Evaluator {
             return +argVal;
           case '~':
             return ~argVal;
+          case '*':
+            if (typeof argVal === 'string' && this.heap.has(argVal)) {
+              return this.heap.get(argVal)!.val;
+            }
+            return typeof argVal === 'object' && argVal !== null && argVal.val !== undefined ? argVal.val : argVal;
+          case '&':
+            return argVal;
           default:
             throw new Error(`Unsupported unary operator '${unary.operator}' at line ${expr.line}`);
         }
@@ -1049,8 +1176,9 @@ export class Evaluator {
               this.stdout += '\n';
               this.recordStep(expr.line, `cout << endl`);
             } else {
-              this.stdout += String(rightVal);
-              this.recordStep(expr.line, `cout << ${rightVal}`);
+              const displayVal = typeof rightVal === 'boolean' ? (rightVal ? '1' : '0') : String(rightVal);
+              this.stdout += displayVal;
+              this.recordStep(expr.line, `cout << ${displayVal}`);
             }
             return 'cout';
           }
@@ -1132,6 +1260,12 @@ export class Evaluator {
             return leftVal << rightVal;
           case '>>':
             return leftVal >> rightVal;
+          case '&':
+            return leftVal & rightVal;
+          case '|':
+            return leftVal | rightVal;
+          case '^':
+            return leftVal ^ rightVal;
         }
         throw new Error(`Unsupported binary operator '${bin.operator}' at line ${expr.line}`);
       }
@@ -1159,6 +1293,9 @@ export class Evaluator {
           if (mem.property === 'right') return node.right;
           throw new Error(`Runtime error: TreeNode has no member '${mem.property}' at line ${expr.line}`);
         }
+        if (obj && typeof obj === 'object') {
+          return (obj as any)[mem.property];
+        }
         throw new Error(`Runtime error: Cannot access member '${mem.property}' on non-heap object at line ${expr.line}`);
       }
 
@@ -1166,6 +1303,11 @@ export class Evaluator {
         const memCall = expr as MemberCallExpressionNode;
         const obj = this.evaluateExpression(memCall.object);
         const args = memCall.args.map((a) => this.evaluateExpression(a));
+
+        if (obj === 'cin' || obj === 'cout') {
+          // Standard stream methods e.g. cin.tie(NULL);
+          return 0;
+        }
 
         if (obj && typeof obj === 'object' && obj.__type === 'queue') {
           const q = obj as QueueObject;
@@ -1197,17 +1339,51 @@ export class Evaluator {
           }
         }
 
+        if (obj && typeof obj === 'object' && obj.__type === 'stack') {
+          const st = obj as StackObject;
+          if (memCall.method === 'push') {
+            st.items.push(args[0]);
+            const valDisplay =
+              typeof args[0] === 'string' && this.heap.has(args[0]) ? this.heap.get(args[0])!.val : args[0];
+            this.recordStep(expr.line, `st.push(${valDisplay})`);
+            return;
+          }
+          if (memCall.method === 'pop') {
+            const popped = st.items.pop();
+            const valDisplay =
+              typeof popped === 'string' && this.heap.has(popped) ? this.heap.get(popped)!.val : popped;
+            this.recordStep(expr.line, `st.pop() -> removed ${valDisplay}`);
+            return popped;
+          }
+          if (memCall.method === 'top') {
+            if (st.items.length === 0) {
+              throw new Error(`Runtime error: st.top() called on empty stack at line ${expr.line}`);
+            }
+            return st.items[st.items.length - 1];
+          }
+          if (memCall.method === 'empty') {
+            return st.items.length === 0;
+          }
+          if (memCall.method === 'size') {
+            return st.items.length;
+          }
+        }
+
         // Vector support e.g. tree[u].push_back(v) or vec.size()
         if (Array.isArray(obj) || (obj && typeof obj === 'object' && (obj as any).__type === 'vector')) {
           if (memCall.method === 'push_back' || memCall.method === 'push') {
             const val = args[0];
+            if (Array.isArray(val) && val.length === 2 && (val as any).first === undefined) {
+              (val as any).first = val[0];
+              (val as any).second = val[1];
+            }
             obj.push(val);
 
             // If this vector represents an adjacency list node, e.g. tree[u].push_back(v)
             if (memCall.object.type === 'IndexAccessExpression') {
               const idxExpr = memCall.object as IndexAccessNode;
               const parentId = this.evaluateExpression(idxExpr.index);
-              const childId = val;
+              const childId = val && typeof val === 'object' && val.first !== undefined ? val.first : val;
               const pStr = String(parentId);
               const cStr = String(childId);
 
@@ -1261,6 +1437,33 @@ export class Evaluator {
             obj.length = 0;
             return;
           }
+          if (memCall.method === 'resize') {
+            const newSize = Number(args[0]) || 0;
+            const isNested = (obj as any).__is2DVector;
+            const depth = (obj as any).__nestingDepth || (isNested ? 2 : 1);
+            while (obj.length < newSize) {
+              if (args.length > 1) {
+                obj.push(args[1]);
+              } else if (isNested && depth > 1) {
+                const inner = createVector();
+                if (depth - 1 > 1) {
+                  (inner as any).__is2DVector = true;
+                  (inner as any).__nestingDepth = depth - 1;
+                }
+                obj.push(inner);
+              } else {
+                obj.push(0);
+              }
+            }
+            obj.length = newSize;
+            return;
+          }
+          if (memCall.method === 'back') {
+            return obj[obj.length - 1];
+          }
+          if (memCall.method === 'front') {
+            return obj[0];
+          }
         }
 
         throw new Error(`Runtime error: Method '${memCall.method}' not supported on object at line ${expr.line}`);
@@ -1282,18 +1485,57 @@ export class Evaluator {
         return id;
       }
 
+      case 'ArrayLiteral': {
+        return (expr as ArrayLiteralNode).elements.map((e) => this.evaluateExpression(e));
+      }
+
       case 'CallExpression': {
         const call = expr as CallExpressionNode;
+        const callee = call.callee;
 
-        if (call.callee === 'max') {
+        if (callee === 'max' || callee === 'std::max') {
           const a = this.evaluateExpression(call.args[0]);
           const b = this.evaluateExpression(call.args[1]);
           return Math.max(a, b);
         }
-        if (call.callee === 'min') {
+        if (callee === 'min' || callee === 'std::min') {
           const a = this.evaluateExpression(call.args[0]);
           const b = this.evaluateExpression(call.args[1]);
           return Math.min(a, b);
+        }
+        if (callee === 'abs' || callee === 'std::abs') {
+          const a = this.evaluateExpression(call.args[0]);
+          return Math.abs(a);
+        }
+        if (callee === 'sqrt' || callee === 'std::sqrt') {
+          const a = this.evaluateExpression(call.args[0]);
+          return Math.sqrt(a);
+        }
+        if (callee === 'pow' || callee === 'std::pow') {
+          const a = this.evaluateExpression(call.args[0]);
+          const b = this.evaluateExpression(call.args[1]);
+          return Math.pow(a, b);
+        }
+        if (callee === 'swap' || callee === 'std::swap') {
+          const arg0 = call.args[0];
+          const arg1 = call.args[1];
+          const v0 = this.evaluateExpression(arg0);
+          const v1 = this.evaluateExpression(arg1);
+          if (arg0.type === 'Identifier') {
+            this.setVariableValue((arg0 as IdentifierNode).name, v1);
+          }
+          if (arg1.type === 'Identifier') {
+            this.setVariableValue((arg1 as IdentifierNode).name, v0);
+          }
+          return;
+        }
+        if (callee === 'make_pair' || callee === 'std::make_pair') {
+          const first = this.evaluateExpression(call.args[0]);
+          const second = this.evaluateExpression(call.args[1]);
+          return { first, second };
+        }
+        if (callee === 'ios_base::sync_with_stdio' || callee === 'sync_with_stdio') {
+          return 0;
         }
 
         return this.callFunction(call.callee, call.args);

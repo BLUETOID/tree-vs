@@ -115,14 +115,35 @@ export function tokenize(source: string): Token[] {
       const startCol = col;
       let numStr = '';
       let dotCount = 0;
-      while (i < source.length && /[\d.]/.test(source[i])) {
-        if (source[i] === '.') {
+      while (i < source.length) {
+        const curr = source[i];
+        if (curr === '.') {
           dotCount++;
           if (dotCount > 1) {
             throw new Error(`Invalid numeric literal with multiple decimal points at line ${line}, col ${col}`);
           }
+          numStr += curr;
+          i++;
+          col++;
+        } else if (/\d/.test(curr)) {
+          numStr += curr;
+          i++;
+          col++;
+        } else if (curr === 'e' || curr === 'E') {
+          numStr += curr;
+          i++;
+          col++;
+          if (i < source.length && (source[i] === '+' || source[i] === '-')) {
+            numStr += source[i];
+            i++;
+            col++;
+          }
+        } else {
+          break;
         }
-        numStr += source[i];
+      }
+      // Consume integer suffixes like LL, ULL, u, l
+      while (i < source.length && /[uUlL]/.test(source[i])) {
         i++;
         col++;
       }

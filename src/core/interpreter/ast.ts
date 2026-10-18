@@ -31,7 +31,8 @@ export type ASTNodeType =
   | 'ConditionalExpression'
   | 'NewExpression'
   | 'Identifier'
-  | 'Literal';
+  | 'Literal'
+  | 'ArrayLiteral';
 
 export interface BaseASTNode {
   type: ASTNodeType;
@@ -227,3 +228,9 @@ export interface LiteralNode extends BaseASTNode {
   value: any;
   raw: string;
 }
+
+export interface ArrayLiteralNode extends BaseASTNode {
+  type: 'ArrayLiteral';
+  elements: BaseASTNode[];
+}
+

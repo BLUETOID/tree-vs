@@ -199,7 +199,9 @@ export const App: React.FC = () => {
   }, [treeSnapshot.nodes, treeSnapshot.rootId]);
 
   // Find active node from active pointers
-  const activePointer = treeSnapshot.pointers?.find((p) => p.name === 'curr' || p.name === 'root');
+  const activePointer = treeSnapshot.pointers?.find(
+    (p) => p.name === 'curr' || p.name === 'node' || p.name === 'root'
+  );
   const activeNodeId = activePointer?.nodeId || undefined;
 
   return (

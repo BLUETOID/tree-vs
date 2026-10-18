@@ -35,6 +35,7 @@ import type {
   NewExpressionNode,
   IdentifierNode,
   LiteralNode,
+  ArrayLiteralNode,
 } from './ast';
 
 export class Parser {
@@ -141,8 +142,14 @@ export class Parser {
       typeStr += (typeStr ? ' ' : '') + this.advance().value;
     }
 
-    if (this.peek().type !== 'EOF' && this.peek().value !== ';' && this.peek().value !== '{') {
+    // Namespace prefix support e.g. std::vector or std::pair
+    while (this.peek().type === 'IDENTIFIER' && this.peekNext().value === '::') {
       typeStr += (typeStr ? ' ' : '') + this.advance().value;
+      typeStr += this.advance().value; // '::'
+    }
+
+    if (this.peek().type !== 'EOF' && this.peek().value !== ';' && this.peek().value !== '{') {
+      typeStr += (typeStr && !typeStr.endsWith('::') ? ' ' : '') + this.advance().value;
     }
 
     // Long long
@@ -161,12 +168,10 @@ export class Parser {
           } else if (this.peek().value === '>>') {
             if (depth >= 2) {
               depth -= 2;
-              typeStr += this.advance().value;
             } else {
-              depth--;
-              typeStr += '>';
-              this.peek().value = '>';
+              depth = 0;
             }
+            typeStr += this.advance().value;
           } else if (this.peek().value === '>') {
             depth--;
             typeStr += this.advance().value;
@@ -375,12 +380,20 @@ export class Parser {
       'queue',
       'vector',
       'stack',
+      'pair',
+      'std',
     ]);
     const next = this.peekNext();
+    const isStdType =
+      token.value === 'std' &&
+      next.value === '::' &&
+      ['vector', 'pair', 'queue', 'stack', 'string'].includes(this.tokens[this.pos + 2]?.value);
+
     if (
-      KNOWN_TYPE_NAMES.has(token.value) ||
-      (token.type === 'IDENTIFIER' && KNOWN_TYPE_NAMES.has(token.value) && (next.value === '*' || next.value === '<' || next.value === '&')) ||
-      (token.type === 'IDENTIFIER' && next.type === 'IDENTIFIER' && KNOWN_TYPE_NAMES.has(token.value))
+      isStdType ||
+      (KNOWN_TYPE_NAMES.has(token.value) && token.value !== 'std') ||
+      (token.type === 'IDENTIFIER' && (next.value === '*' || next.value === '<' || next.value === '&')) ||
+      (token.type === 'IDENTIFIER' && next.type === 'IDENTIFIER')
     ) {
       return this.parseVarDecl();
     }
@@ -487,8 +500,19 @@ export class Parser {
         'queue',
         'vector',
         'stack',
+        'pair',
+        'std',
       ]);
-      if (KNOWN_TYPE_NAMES.has(this.peek().value)) {
+      const isStdType =
+        this.peek().value === 'std' &&
+        this.peekNext().value === '::' &&
+        ['vector', 'pair', 'queue', 'stack', 'string'].includes(this.tokens[this.pos + 2]?.value);
+
+      if (
+        isStdType ||
+        (KNOWN_TYPE_NAMES.has(this.peek().value) && this.peek().value !== 'std') ||
+        (this.peek().type === 'IDENTIFIER' && this.peekNext().type === 'IDENTIFIER')
+      ) {
         init = this.parseVarDecl(true);
       } else {
         init = this.parseAssignmentOrExpr(true);
@@ -646,19 +670,22 @@ export class Parser {
     const precMap: Record<string, number> = {
       '||': 1,
       '&&': 2,
-      '==': 3,
-      '!=': 3,
-      '<': 4,
-      '>': 4,
-      '<=': 4,
-      '>=': 4,
-      '<<': 5,
-      '>>': 5,
-      '+': 6,
-      '-': 6,
-      '*': 7,
-      '/': 7,
-      '%': 7,
+      '|': 3,
+      '^': 4,
+      '&': 5,
+      '==': 6,
+      '!=': 6,
+      '<': 7,
+      '>': 7,
+      '<=': 7,
+      '>=': 7,
+      '<<': 8,
+      '>>': 8,
+      '+': 9,
+      '-': 9,
+      '*': 10,
+      '/': 10,
+      '%': 10,
     };
 
     while (this.peek().type === 'OPERATOR' && precMap[this.peek().value] >= minPrec) {
@@ -680,57 +707,7 @@ export class Parser {
   private parsePrimary(): BaseASTNode {
     const token = this.peek();
 
-    // Prefix ++ and --
-    if (token.value === '++' || token.value === '--') {
-      this.advance();
-      const argument = this.parsePrimary();
-      return {
-        type: 'UpdateExpression',
-        line: token.line,
-        operator: token.value as '++' | '--',
-        argument,
-        prefix: true,
-      } as UpdateExpressionNode;
-    }
-
-    // Unary operators (!, -, +, ~)
-    if (token.value === '!' || token.value === '~' || token.value === '+' || token.value === '-') {
-      this.advance();
-      const argument = this.parsePrimary();
-      return {
-        type: 'UnaryExpression',
-        line: token.line,
-        operator: token.value,
-        argument,
-      } as UnaryExpressionNode;
-    }
-
-    if (token.value === 'new') {
-      this.advance();
-      const typeName = this.advance().value;
-      const args: BaseASTNode[] = [];
-      if (this.match('(')) {
-        while (this.peek().type !== 'EOF' && this.peek().value !== ')') {
-          args.push(this.parseExpression());
-          if (this.peek().value === ',') this.advance();
-        }
-        this.expect(')');
-      }
-      return {
-        type: 'NewExpression',
-        line: token.line,
-        typeName,
-        args,
-      } as NewExpressionNode;
-    }
-
-    if (token.value === '(') {
-      this.advance();
-      const expr = this.parseExpression();
-      this.expect(')');
-      return this.parsePostfix(expr);
-    }
-
+    // 1. Literal values (Numeric, String) - checked first to prevent punctuation collision
     if (token.type === 'NUMBER') {
       this.advance();
       return {
@@ -751,7 +728,88 @@ export class Parser {
       } as LiteralNode;
     }
 
-    if (token.value === 'nullptr' || token.value === 'NULL') {
+    // 2. Prefix ++ and --
+    if (token.type === 'OPERATOR' && (token.value === '++' || token.value === '--')) {
+      this.advance();
+      const argument = this.parsePrimary();
+      return {
+        type: 'UpdateExpression',
+        line: token.line,
+        operator: token.value as '++' | '--',
+        argument,
+        prefix: true,
+      } as UpdateExpressionNode;
+    }
+
+    // 3. Unary operators (!, -, +, ~, *, &)
+    if (
+      token.type === 'OPERATOR' &&
+      (token.value === '!' ||
+        token.value === '~' ||
+        token.value === '+' ||
+        token.value === '-' ||
+        token.value === '*' ||
+        token.value === '&')
+    ) {
+      this.advance();
+      const argument = this.parsePrimary();
+      return {
+        type: 'UnaryExpression',
+        line: token.line,
+        operator: token.value,
+        argument,
+      } as UnaryExpressionNode;
+    }
+
+    // 4. new expression e.g. new TreeNode(val)
+    if (token.type === 'KEYWORD' && token.value === 'new') {
+      this.advance();
+      const typeName = this.advance().value;
+      const args: BaseASTNode[] = [];
+      if (this.match('(')) {
+        while (this.peek().type !== 'EOF' && this.peek().value !== ')') {
+          args.push(this.parseExpression());
+          if (this.peek().value === ',') this.advance();
+        }
+        this.expect(')');
+      }
+      return {
+        type: 'NewExpression',
+        line: token.line,
+        typeName,
+        args,
+      } as NewExpressionNode;
+    }
+
+    // 5. Parenthesized expression (expr)
+    if (token.type === 'PUNCTUATION' && token.value === '(') {
+      this.advance();
+      const expr = this.parseExpression();
+      this.expect(')');
+      return this.parsePostfix(expr);
+    }
+
+    // 6. Array literal {1, 2, 3}
+    if (token.type === 'PUNCTUATION' && token.value === '{') {
+      this.advance();
+      const elements: BaseASTNode[] = [];
+      while (this.peek().type !== 'EOF' && this.peek().value !== '}') {
+        elements.push(this.parseExpression());
+        if (this.peek().value === ',') this.advance();
+      }
+      this.expect('}');
+      return {
+        type: 'ArrayLiteral',
+        line: token.line,
+        elements,
+      } as ArrayLiteralNode;
+    }
+
+    // 7. Keywords / Builtin Literals
+    if (
+      (token.type === 'KEYWORD' || token.type === 'IDENTIFIER') &&
+      (token.value === 'nullptr' || token.value === 'NULL')
+    ) {
       this.advance();
       return {
         type: 'Literal',
@@ -761,7 +819,7 @@ export class Parser {
       } as LiteralNode;
     }
 
-    if (token.value === 'true' || token.value === 'false') {
+    if (token.type === 'KEYWORD' && (token.value === 'true' || token.value === 'false')) {
       this.advance();
       return {
         type: 'Literal',
@@ -771,6 +829,7 @@ export class Parser {
       } as LiteralNode;
     }
 
+    // 8. Identifiers & Keywords
     if (token.type === 'IDENTIFIER' || token.type === 'KEYWORD') {
       this.advance();
       let node: BaseASTNode = {
@@ -787,6 +846,19 @@ export class Parser {
 
   private parsePostfix(expr: BaseASTNode): BaseASTNode {
     while (true) {
+      // Scope resolution e.g. std::max or ios_base::sync_with_stdio
+      if (this.peek().value === '::') {
+        this.advance();
+        const member = this.advance().value;
+        const prevName = expr.type === 'Identifier' ? (expr as IdentifierNode).name : '';
+        expr = {
+          type: 'Identifier',
+          line: expr.line,
+          name: prevName ? `${prevName}::${member}` : member,
+        } as IdentifierNode;
+        continue;
+      }
+
       // Postfix ++ and --
       if (this.peek().value === '++' || this.peek().value === '--') {
         const op = this.advance().value as '++' | '--';
