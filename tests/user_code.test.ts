@@ -276,6 +276,65 @@ int main() {
     expect(falseResult.error).toBeUndefined();
     expect(falseResult.stdout).toBe('FALSE');
   });
+
+  it('preserves rootId as 1 throughout execution with 7 nodes', () => {
+    const code = `#include <bits/stdc++.h>
+using namespace std;
+
+bool dfs(int node, int parent, long long cur, int target, vector<vector<int>> &adj) {
+    cur += node;
+    bool isLeaf = true;
+    for (int nxt : adj[node]) {
+        if (nxt == parent) continue;
+        isLeaf = false;
+        if (dfs(nxt, node, cur, target, adj)) return true;
+    }
+    return isLeaf && cur == target;
+}
+
+bool solution(int n, int target_sum, vector<vector<int>> &adj) {
+    int root = 1;
+    return dfs(root, -1, 0, target_sum, adj);
+}
+
+int main() {
+    int n, k;
+    cin >> n >> k;
+    vector<vector<int>> adj(n + 1);
+    for (int i = 1; i < n; i++) {
+        int a, b;
+        cin >> a >> b;
+        adj[a].push_back(b);
+        adj[b].push_back(a);
+    }
+    bool ans = solution(n, k, adj);
+    if(ans){
+        cout<<"TRUE";
+    }
+    else{
+        cout<<"FALSE";
+    }
+}`;
+
+    const input = `7 9
+1 2
+1 4
+2 5
+2 3
+2 6
+4 7`;
+
+    const result = runCppTreeInterpreter(code, input);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout).toBe('TRUE');
+
+    for (let i = 0; i < result.trace.length; i++) {
+      const snap = result.trace[i].treeSnapshot;
+      if (snap && Object.keys(snap.nodes).length === 7) {
+        expect(snap.rootId).toBe('1');
+      }
+    }
+  });
 });
 
 

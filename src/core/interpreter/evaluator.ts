@@ -72,7 +72,73 @@ function createVector(initialItems: any[] = []): any[] {
   return arr;
 }
 
+const NON_POINTER_NAMES = new Set([
+  'depth',
+  'maxd',
+  'mind',
+  'max_depth',
+  'min_depth',
+  'maxdepth',
+  'mindepth',
+  'd',
+  'dist',
+  'distance',
+  'n',
+  'm',
+  'k',
+  'i',
+  'j',
+  'idx',
+  'index',
+  'sz',
+  'size',
+  'len',
+  'length',
+  'ans',
+  'sum',
+  'cnt',
+  'count',
+  'total',
+  'val',
+  'value',
+  'cur',
+  'target_sum',
+  'targetsum',
+  'runningsum',
+  'running_sum',
+  'acc',
+  'accum',
+  'diff',
+  'difference',
+  'isleaf',
+  'timer',
+  'tin',
+  'tout',
+  'cost',
+  'wt',
+  'weight',
+  'height',
+  'h',
+]);
 
+const VALID_NODE_PARAM_NAMES = new Set([
+  'root',
+  'node',
+  'curr',
+  'parent',
+  'child',
+  'neighbour',
+  'neighbor',
+  'nxt',
+  'next',
+  'src',
+  'dest',
+  'target',
+  'p',
+  'q',
+  'res',
+  'temp',
+]);
 
 interface Frame {
   name: string;
@@ -96,6 +162,7 @@ export class Evaluator {
   private globals: Record<string, any> = {};
   private stdinTokens: string[] = [];
   private stdinIndex: number = 0;
+  private authoritativeRootId: string | null = null;
 
   constructor(ast: ProgramNode, stdin: string = '') {
     this.ast = ast;
@@ -374,23 +441,56 @@ export class Evaluator {
     }
 
     let rootId: string | null = null;
-    if (mainFrame && typeof mainFrame.locals['root'] === 'string' && this.heap.has(mainFrame.locals['root'])) {
-      rootId = mainFrame.locals['root'];
-    } else if (mainFrame && typeof mainFrame.args['root'] === 'string' && this.heap.has(mainFrame.args['root'])) {
-      rootId = mainFrame.args['root'];
-    } else if (zeroIncomingNodes.length > 0) {
-      rootId = zeroIncomingNodes[0];
-    } else if (this.callStack.length > 1) {
-      // If called from main, check the first argument of the entry function (e.g. dfs(1, ...))
-      const entryFrame = this.callStack[1];
-      const entryArg = Object.values(entryFrame.args)[0];
-      const argKey = entryArg !== undefined && entryArg !== null ? String(entryArg) : '';
-      if (argKey && this.heap.has(argKey)) {
-        rootId = argKey;
+
+    // a) Check mainFrame first for an authoritative 'root' variable (held or declared in main)
+    if (mainFrame && mainFrame.locals['root'] !== undefined && mainFrame.locals['root'] !== null) {
+      const mKey = String(mainFrame.locals['root']);
+      if (this.heap.has(mKey)) rootId = mKey;
+    } else if (mainFrame && mainFrame.args['root'] !== undefined && mainFrame.args['root'] !== null) {
+      const mKey = String(mainFrame.args['root']);
+      if (this.heap.has(mKey)) rootId = mKey;
+    }
+
+    // b) If mainFrame has no 'root', check outer caller frames for an explicit local 'root' (e.g. solution() { int root = 1; })
+    if (!rootId) {
+      for (let f = 1; f < this.callStack.length; f++) {
+        const frame = this.callStack[f];
+        if (frame.locals['root'] !== undefined && frame.locals['root'] !== null) {
+          const rKey = String(frame.locals['root']);
+          if (this.heap.has(rKey)) {
+            rootId = rKey;
+            break;
+          }
+        }
       }
     }
+    if (!rootId && this.globals['root'] !== undefined && this.globals['root'] !== null) {
+      const gKey = String(this.globals['root']);
+      if (this.heap.has(gKey)) rootId = gKey;
+    }
+
+    // c) Directed tree: single topological in-degree 0 node (e.g. BST or AVL root)
+    if (!rootId && zeroIncomingNodes.length > 0) {
+      rootId = zeroIncomingNodes[0];
+    }
+
+    // d) Stable authoritative root established for this tree structure
+    if (!rootId && this.authoritativeRootId && this.heap.has(this.authoritativeRootId)) {
+      rootId = this.authoritativeRootId;
+    }
+
+    // e) Fallback: first node created in heap
     if (!rootId && this.heap.size > 0) {
       rootId = this.heap.keys().next().value || null;
+    }
+
+    // Maintain stable authoritative root
+    if (rootId) {
+      if (!this.authoritativeRootId) {
+        this.authoritativeRootId = rootId;
+      } else if (zeroIncomingNodes.length > 0 && zeroIncomingNodes.includes(rootId)) {
+        this.authoritativeRootId = rootId;
+      }
     }
 
     // 2. Pointer Badges:
@@ -403,73 +503,7 @@ export class Evaluator {
       pointers.push({ name: 'root', nodeId: rootId, color: '#06b6d4' });
     }
 
-    const NON_POINTER_NAMES = new Set([
-      'depth',
-      'maxd',
-      'mind',
-      'max_depth',
-      'min_depth',
-      'maxdepth',
-      'mindepth',
-      'd',
-      'dist',
-      'distance',
-      'n',
-      'm',
-      'k',
-      'i',
-      'j',
-      'idx',
-      'index',
-      'sz',
-      'size',
-      'len',
-      'length',
-      'ans',
-      'sum',
-      'cnt',
-      'count',
-      'total',
-      'val',
-      'value',
-      'cur',
-      'target_sum',
-      'targetsum',
-      'runningsum',
-      'running_sum',
-      'acc',
-      'accum',
-      'diff',
-      'difference',
-      'isleaf',
-      'timer',
-      'tin',
-      'tout',
-      'cost',
-      'wt',
-      'weight',
-      'height',
-      'h',
-    ]);
 
-    const VALID_NODE_PARAM_NAMES = new Set([
-      'root',
-      'node',
-      'curr',
-      'parent',
-      'child',
-      'neighbour',
-      'neighbor',
-      'nxt',
-      'next',
-      'src',
-      'dest',
-      'target',
-      'p',
-      'q',
-      'res',
-      'temp',
-    ]);
 
     if (currentFrame) {
       const allVars = { ...currentFrame.args, ...currentFrame.locals };
