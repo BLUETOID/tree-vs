@@ -149,6 +149,7 @@ export class Evaluator {
                     isArray: decl.isArray,
                     arraySize: decl.arraySize,
                     initializer: decl.initializer,
+                    constructorArgs: decl.constructorArgs,
                   },
                 ];
 
@@ -163,7 +164,24 @@ export class Evaluator {
             } else if (decl.varType.startsWith('queue')) {
               val = { __type: 'queue', items: [] } as QueueObject;
             } else if (decl.varType.startsWith('vector')) {
-              val = createVector();
+              if (d.constructorArgs && d.constructorArgs.length > 0) {
+                const size = Number(this.evaluateExpression(d.constructorArgs[0])) || 0;
+                let defaultVal: any = 0;
+                if (d.constructorArgs.length > 1) {
+                  defaultVal = this.evaluateExpression(d.constructorArgs[1]);
+                } else if (decl.varType.includes('bool')) {
+                  defaultVal = false;
+                } else if (decl.varType.includes('string')) {
+                  defaultVal = '';
+                }
+                const items: any[] = [];
+                for (let i = 0; i < size; i++) items.push(defaultVal);
+                val = createVector(items);
+              } else {
+                val = createVector();
+              }
+            } else if (d.constructorArgs && d.constructorArgs.length > 0) {
+              val = this.evaluateExpression(d.constructorArgs[0]);
             } else if (d.initializer) {
               val = this.evaluateExpression(d.initializer);
             }
@@ -466,6 +484,7 @@ export class Evaluator {
                   isArray: decl.isArray,
                   arraySize: decl.arraySize,
                   initializer: decl.initializer,
+                  constructorArgs: decl.constructorArgs,
                 },
               ];
 
@@ -480,7 +499,24 @@ export class Evaluator {
           } else if (decl.varType.startsWith('queue')) {
             val = { __type: 'queue', items: [] } as QueueObject;
           } else if (decl.varType.startsWith('vector')) {
-            val = createVector();
+            if (d.constructorArgs && d.constructorArgs.length > 0) {
+              const size = Number(this.evaluateExpression(d.constructorArgs[0])) || 0;
+              let defaultVal: any = 0;
+              if (d.constructorArgs.length > 1) {
+                defaultVal = this.evaluateExpression(d.constructorArgs[1]);
+              } else if (decl.varType.includes('bool')) {
+                defaultVal = false;
+              } else if (decl.varType.includes('string')) {
+                defaultVal = '';
+              }
+              const items: any[] = [];
+              for (let i = 0; i < size; i++) items.push(defaultVal);
+              val = createVector(items);
+            } else {
+              val = createVector();
+            }
+          } else if (d.constructorArgs && d.constructorArgs.length > 0) {
+            val = this.evaluateExpression(d.constructorArgs[0]);
           } else if (d.initializer) {
             val = this.evaluateExpression(d.initializer);
           } else if (
@@ -490,11 +526,15 @@ export class Evaluator {
             decl.varType === 'float'
           ) {
             val = 0;
+          } else if (decl.varType === 'bool') {
+            val = false;
+          } else if (decl.varType === 'string') {
+            val = '';
           }
           frame.locals[d.name] = val;
           this.recordStep(
             stmt.line,
-            `Declared ${decl.varType} ${d.name}${d.isArray ? '[]' : ''}${val !== undefined && !d.isArray ? ` = ${typeof val === 'object' && val?.__type === 'queue' ? 'queue<>' : val}` : ''}`
+            `Declared ${decl.varType} ${d.name}${d.isArray ? '[]' : ''}${val !== undefined && !d.isArray ? ` = ${typeof val === 'object' && val?.__type === 'queue' ? 'queue<>' : Array.isArray(val) ? `vector[${val.length}]` : val}` : ''}`
           );
         }
         return;

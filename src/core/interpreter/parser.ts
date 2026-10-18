@@ -9,6 +9,7 @@ import type {
   FunctionDeclNode,
   StructDeclNode,
   VariableDeclNode,
+  VariableDeclarator,
   AssignmentNode,
   CompoundAssignmentNode,
   MemberAssignmentNode,
@@ -165,12 +166,7 @@ export class Parser {
     return typeStr;
   }
 
-  private parseDeclarator(): {
-    name: string;
-    isArray?: boolean;
-    arraySize?: BaseASTNode;
-    initializer?: BaseASTNode;
-  } {
+  private parseDeclarator(): VariableDeclarator {
     const name = this.advance().value;
     let isArray = false;
     let arraySize: BaseASTNode | undefined;
@@ -181,11 +177,20 @@ export class Parser {
       }
       this.expect(']');
     }
+    let constructorArgs: BaseASTNode[] | undefined;
+    if (this.match('(')) {
+      constructorArgs = [];
+      while (this.peek().type !== 'EOF' && this.peek().value !== ')') {
+        constructorArgs.push(this.parseExpression());
+        if (this.peek().value === ',') this.advance();
+      }
+      this.expect(')');
+    }
     let initializer: BaseASTNode | undefined;
     if (this.match('=')) {
       initializer = this.parseExpression();
     }
-    return { name, isArray, arraySize, initializer };
+    return { name, isArray, arraySize, initializer, constructorArgs };
   }
 
   private parseFunctionOrVar(): BaseASTNode {
@@ -195,24 +200,41 @@ export class Parser {
 
     // Function declaration: type name ( ... ) { ... }
     if (this.peek().value === '(') {
-      this.advance(); // '('
-      const params: { type: string; name: string }[] = [];
-      while (this.peek().type !== 'EOF' && this.peek().value !== ')') {
-        const pType = this.parseTypeString();
-        const pName = this.advance().value;
-        params.push({ type: pType, name: pName });
-        if (this.peek().value === ',') this.advance();
+      let isFunc = false;
+      let depth = 0;
+      for (let i = this.pos; i < this.tokens.length; i++) {
+        if (this.tokens[i].value === '(') depth++;
+        else if (this.tokens[i].value === ')') {
+          depth--;
+          if (depth === 0) {
+            if (i + 1 < this.tokens.length && this.tokens[i + 1].value === '{') {
+              isFunc = true;
+            }
+            break;
+          }
+        }
       }
-      this.expect(')');
-      const body = this.parseBlock();
-      return {
-        type: 'FunctionDeclaration',
-        line: startLine,
-        returnType: typeStr,
-        name,
-        params,
-        body,
-      } as FunctionDeclNode;
+
+      if (isFunc) {
+        this.advance(); // '('
+        const params: { type: string; name: string }[] = [];
+        while (this.peek().type !== 'EOF' && this.peek().value !== ')') {
+          const pType = this.parseTypeString();
+          const pName = this.advance().value;
+          params.push({ type: pType, name: pName });
+          if (this.peek().value === ',') this.advance();
+        }
+        this.expect(')');
+        const body = this.parseBlock();
+        return {
+          type: 'FunctionDeclaration',
+          line: startLine,
+          returnType: typeStr,
+          name,
+          params,
+          body,
+        } as FunctionDeclNode;
+      }
     }
 
     // Top-level variable declaration(s)
@@ -226,23 +248,23 @@ export class Parser {
       this.expect(']');
     }
 
+    let constructorArgs: BaseASTNode[] | undefined;
+    if (this.match('(')) {
+      constructorArgs = [];
+      while (this.peek().type !== 'EOF' && this.peek().value !== ')') {
+        constructorArgs.push(this.parseExpression());
+        if (this.peek().value === ',') this.advance();
+      }
+      this.expect(')');
+    }
+
     let initializer: BaseASTNode | undefined;
     if (this.match('=')) {
       initializer = this.parseExpression();
     }
 
-    const firstDecl: {
-      name: string;
-      isArray?: boolean;
-      arraySize?: BaseASTNode;
-      initializer?: BaseASTNode;
-    } = { name, isArray, arraySize, initializer };
-    const declarations: Array<{
-      name: string;
-      isArray?: boolean;
-      arraySize?: BaseASTNode;
-      initializer?: BaseASTNode;
-    }> = [firstDecl];
+    const firstDecl: VariableDeclarator = { name, isArray, arraySize, initializer, constructorArgs };
+    const declarations: VariableDeclarator[] = [firstDecl];
 
     while (this.match(',')) {
       declarations.push(this.parseDeclarator());
@@ -258,6 +280,7 @@ export class Parser {
       initializer,
       isArray,
       arraySize,
+      constructorArgs,
       declarations,
     } as VariableDeclNode;
   }
@@ -520,6 +543,7 @@ export class Parser {
       initializer: firstDecl.initializer,
       isArray: firstDecl.isArray,
       arraySize: firstDecl.arraySize,
+      constructorArgs: firstDecl.constructorArgs,
       declarations,
     };
   }

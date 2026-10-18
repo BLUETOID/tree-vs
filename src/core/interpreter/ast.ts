@@ -62,6 +62,7 @@ export interface VariableDeclarator {
   isArray?: boolean;
   arraySize?: BaseASTNode;
   initializer?: BaseASTNode;
+  constructorArgs?: BaseASTNode[];
 }
 
 export interface VariableDeclNode extends BaseASTNode {
@@ -71,6 +72,7 @@ export interface VariableDeclNode extends BaseASTNode {
   initializer?: BaseASTNode;
   isArray?: boolean;
   arraySize?: BaseASTNode;
+  constructorArgs?: BaseASTNode[];
   declarations?: VariableDeclarator[];
 }
 
