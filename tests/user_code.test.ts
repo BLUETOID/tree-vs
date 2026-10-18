@@ -150,4 +150,57 @@ int main() {
     expect(layout.nodes.length).toBe(4);
     expect(layout.edges.length).toBe(3);
   });
+
+  it('runs user bidirectional dfs code with &maxd reference', () => {
+    const code = `#include <bits/stdc++.h>
+using namespace std;
+vector<int> adj[100002];
+void dfs(int node, int parent, int d, int &maxd){
+    maxd = max(d, maxd);
+    for(int v: adj[node]){
+        if(v != parent){
+            dfs(v, node, d + 1, maxd);
+        }
+    }
+}
+int main() {
+   int n;
+   cin >> n;
+   int depth = 0;
+   for(int i = 1; i < n; i++){
+       int u, v;
+       cin >> u >> v;
+       adj[u].push_back(v);
+       adj[v].push_back(u);
+   }
+   dfs(1, -1, 0, depth);
+   cout << depth;
+}`;
+
+    const input = `8
+1 2
+1 3
+3 4
+3 5
+3 6
+2 7 
+2 8`;
+
+    const result = runCppTreeInterpreter(code, input);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('2');
+    for (const step of result.trace) {
+      if (step.treeSnapshot) {
+        computeTreeLayout(step.treeSnapshot.nodes, step.treeSnapshot.rootId);
+      }
+    }
+    const lastEvent = result.trace[result.trace.length - 1];
+    expect(lastEvent.treeSnapshot).toBeDefined();
+    expect(lastEvent.treeSnapshot!.rootId).toBe('1');
+    const layout = computeTreeLayout(lastEvent.treeSnapshot!.nodes, lastEvent.treeSnapshot!.rootId);
+    expect(layout.nodes.length).toBe(8);
+    expect(layout.edges.length).toBe(7);
+  });
 });
+
+

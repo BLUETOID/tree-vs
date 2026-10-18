@@ -40,17 +40,19 @@ export function computeTreeLayout(
   const parentMap = new Map<string, string>();
 
   for (const [id, data] of Object.entries(nodesMap)) {
-    if (data.children && data.children.length > 0) {
+    if (data.parent && allIds.has(data.parent)) {
+      parentMap.set(id, data.parent);
+    } else if (data.children && data.children.length > 0) {
       for (const chId of data.children) {
-        if (allIds.has(chId)) {
+        if (allIds.has(chId) && !parentMap.has(chId) && chId !== rootId) {
           parentMap.set(chId, id);
         }
       }
     } else {
-      if (data.left && allIds.has(data.left)) {
+      if (data.left && allIds.has(data.left) && !parentMap.has(data.left) && data.left !== rootId) {
         parentMap.set(data.left, id);
       }
-      if (data.right && allIds.has(data.right)) {
+      if (data.right && allIds.has(data.right) && !parentMap.has(data.right) && data.right !== rootId) {
         parentMap.set(data.right, id);
       }
     }
@@ -83,7 +85,7 @@ export function computeTreeLayout(
 
     const hasChildren = Boolean(node.children && node.children.length > 0);
     if (hasChildren) {
-      const validChildren = node.children!.filter((c) => allIds.has(c));
+      const validChildren = node.children!.filter((c) => allIds.has(c) && !visitedSubtree.has(c));
       if (validChildren.length === 0) {
         const w = NODE_WIDTH + NODE_GAP_X;
         subtreeWidths.set(id, w);
@@ -141,7 +143,7 @@ export function computeTreeLayout(
 
     const hasChildren = Boolean(node.children && node.children.length > 0);
     if (hasChildren) {
-      const validChildren = node.children!.filter((c) => allIds.has(c));
+      const validChildren = node.children!.filter((c) => allIds.has(c) && !visitedLayout.has(c));
       if (validChildren.length === 0) {
         const x = startX + subWidth / 2;
         positions.set(id, { x, y });
@@ -214,13 +216,34 @@ export function computeTreeLayout(
 
   const depths = new Map<string, number>();
   const heights = new Map<string, number>();
+  const visitingHeight = new Set<string>();
+
   function calcSubtreeHeight(id: string): number {
     if (heights.has(id)) return heights.get(id)!;
+    if (visitingHeight.has(id)) return 1;
+    visitingHeight.add(id);
+
     const node = nodesMap[id];
-    if (!node) return 0;
-    const hL = node.left && allIds.has(node.left) ? calcSubtreeHeight(node.left) : 0;
-    const hR = node.right && allIds.has(node.right) ? calcSubtreeHeight(node.right) : 0;
-    const h = 1 + Math.max(hL, hR);
+    if (!node) {
+      visitingHeight.delete(id);
+      return 0;
+    }
+
+    let maxChildH = 0;
+    const hasChildren = Boolean(node.children && node.children.length > 0);
+    if (hasChildren) {
+      const validChildren = node.children!.filter((c) => allIds.has(c) && !visitingHeight.has(c));
+      for (const ch of validChildren) {
+        maxChildH = Math.max(maxChildH, calcSubtreeHeight(ch));
+      }
+    } else {
+      const hL = node.left && allIds.has(node.left) && !visitingHeight.has(node.left) ? calcSubtreeHeight(node.left) : 0;
+      const hR = node.right && allIds.has(node.right) && !visitingHeight.has(node.right) ? calcSubtreeHeight(node.right) : 0;
+      maxChildH = Math.max(hL, hR);
+    }
+
+    const h = 1 + maxChildH;
+    visitingHeight.delete(id);
     heights.set(id, h);
     return h;
   }
@@ -263,7 +286,7 @@ export function computeTreeLayout(
 
     if (data.children && data.children.length > 0) {
       for (const chId of data.children) {
-        if (positions.has(chId)) {
+        if (positions.has(chId) && data.parent !== chId) {
           const childPos = positions.get(chId)!;
           let edgeState: TreeEdgeState = 'default';
           if (data.state === 'active' || data.state === 'comparing') edgeState = 'active';

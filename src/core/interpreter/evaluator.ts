@@ -68,6 +68,7 @@ interface Frame {
   name: string;
   args: Record<string, any>;
   locals: Record<string, any>;
+  refs?: Record<string, { get: () => any; set: (val: any) => void }>;
   line: number;
 }
 
@@ -106,6 +107,9 @@ export class Evaluator {
   private getVariableValue(id: string): any {
     const frame = this.callStack[this.callStack.length - 1];
     if (frame) {
+      if (frame.refs && frame.refs[id]) {
+        return frame.refs[id].get();
+      }
       if (Object.prototype.hasOwnProperty.call(frame.locals, id)) {
         return frame.locals[id];
       }
@@ -121,6 +125,10 @@ export class Evaluator {
 
   private setVariableValue(id: string, val: any): void {
     const frame = this.callStack[this.callStack.length - 1];
+    if (frame && frame.refs && frame.refs[id]) {
+      frame.refs[id].set(val);
+      return;
+    }
     if (frame && Object.prototype.hasOwnProperty.call(frame.locals, id)) {
       frame.locals[id] = val;
     } else if (frame && Object.prototype.hasOwnProperty.call(frame.args, id)) {
@@ -263,7 +271,16 @@ export class Evaluator {
       rootId = mainFrame.args['root'];
     } else if (zeroIncomingNodes.length > 0) {
       rootId = zeroIncomingNodes[0];
-    } else if (this.heap.size > 0) {
+    } else if (this.callStack.length > 1) {
+      // If called from main, check the first argument of the entry function (e.g. dfs(1, ...))
+      const entryFrame = this.callStack[1];
+      const entryArg = Object.values(entryFrame.args)[0];
+      const argKey = entryArg !== undefined && entryArg !== null ? String(entryArg) : '';
+      if (argKey && this.heap.has(argKey)) {
+        rootId = argKey;
+      }
+    }
+    if (!rootId && this.heap.size > 0) {
       rootId = this.heap.keys().next().value || null;
     }
 
@@ -332,10 +349,16 @@ export class Evaluator {
     }
 
     // Traverse authoritative tree starting from rootId to assign tree parents
+    // and orient tree edges from root downwards (removing back-edges to parents)
     if (rootId && heapSnapshot[rootId]) {
       const visited = new Set<string>();
       const queue = [rootId];
       visited.add(rootId);
+
+      const treeChildren = new Map<string, string[]>();
+      for (const id of Object.keys(heapSnapshot)) {
+        treeChildren.set(id, []);
+      }
 
       while (queue.length > 0) {
         const u = queue.shift()!;
@@ -347,6 +370,7 @@ export class Evaluator {
             if (heapSnapshot[ch] && !visited.has(ch)) {
               heapSnapshot[ch].parent = u;
               visited.add(ch);
+              treeChildren.get(u)!.push(ch);
               queue.push(ch);
             }
           }
@@ -363,6 +387,14 @@ export class Evaluator {
           }
         }
       }
+
+      for (const [id, children] of treeChildren) {
+        if (heapSnapshot[id].children) {
+          heapSnapshot[id].children = children;
+          heapSnapshot[id].left = null;
+          heapSnapshot[id].right = null;
+        }
+      }
     }
 
     const treeSnapshot: TreeStepSnapshot = {
@@ -377,10 +409,11 @@ export class Evaluator {
         callStack: this.callStack.map((f, idx) => {
           const formattedArgs: Record<string, any> = {};
           for (const [k, v] of Object.entries(f.args)) {
-            if (typeof v === 'string' && this.heap.has(v)) {
-              formattedArgs[k] = this.heap.get(v)!.val;
+            const actualVal = f.refs && f.refs[k] ? f.refs[k].get() : v;
+            if (typeof actualVal === 'string' && this.heap.has(actualVal)) {
+              formattedArgs[k] = this.heap.get(actualVal)!.val;
             } else {
-              formattedArgs[k] = v;
+              formattedArgs[k] = actualVal;
             }
           }
           return {
@@ -393,7 +426,10 @@ export class Evaluator {
         queue: queueState.length > 0 ? queueState : undefined,
         breadcrumbs: this.callStack.map((f) => {
           const argsStr = Object.entries(f.args)
-            .map(([k, v]) => `${k}=${typeof v === 'string' && this.heap.has(v) ? this.heap.get(v)!.val : v}`)
+            .map(([k, v]) => {
+              const actualVal = f.refs && f.refs[k] ? f.refs[k].get() : v;
+              return `${k}=${typeof actualVal === 'string' && this.heap.has(actualVal) ? this.heap.get(actualVal)!.val : actualVal}`;
+            })
             .join(', ');
           return `${f.name}(${argsStr})`;
         }),
@@ -407,10 +443,11 @@ export class Evaluator {
       callStack: this.callStack.map((f) => {
         const formattedArgs: Record<string, any> = {};
         for (const [k, v] of Object.entries(f.args)) {
-          if (typeof v === 'string' && this.heap.has(v)) {
-            formattedArgs[k] = this.heap.get(v)!.val;
+          const actualVal = f.refs && f.refs[k] ? f.refs[k].get() : v;
+          if (typeof actualVal === 'string' && this.heap.has(actualVal)) {
+            formattedArgs[k] = this.heap.get(actualVal)!.val;
           } else {
-            formattedArgs[k] = v;
+            formattedArgs[k] = actualVal;
           }
         }
         return {
@@ -426,26 +463,94 @@ export class Evaluator {
     });
   }
 
-  private callFunction(name: string, argValues: any[]): any {
+  private callFunction(name: string, argExpressions: BaseASTNode[] = []): any {
     const fn = this.functions.get(name);
     if (!fn) {
       throw new Error(`Function '${name}' is not defined.`);
     }
 
+    const callerFrame = this.callStack[this.callStack.length - 1];
     const args: Record<string, any> = Object.create(null);
+    const refs: Record<string, { get: () => any; set: (val: any) => void }> = Object.create(null);
+    const argValuesForLog: any[] = [];
+
     fn.params.forEach((param, idx) => {
-      args[param.name] = argValues[idx];
+      const argExpr = argExpressions[idx];
+      const isRef = param.type.includes('&');
+
+      if (isRef && argExpr) {
+        if (argExpr.type === 'Identifier') {
+          const varName = (argExpr as IdentifierNode).name;
+          if (callerFrame && callerFrame.refs && callerFrame.refs[varName]) {
+            refs[param.name] = callerFrame.refs[varName];
+          } else if (callerFrame && Object.prototype.hasOwnProperty.call(callerFrame.locals, varName)) {
+            const target = callerFrame.locals;
+            refs[param.name] = {
+              get: () => target[varName],
+              set: (v: any) => {
+                target[varName] = v;
+              },
+            };
+          } else if (callerFrame && Object.prototype.hasOwnProperty.call(callerFrame.args, varName)) {
+            const target = callerFrame.args;
+            refs[param.name] = {
+              get: () => target[varName],
+              set: (v: any) => {
+                target[varName] = v;
+              },
+            };
+          } else {
+            refs[param.name] = {
+              get: () => this.globals[varName],
+              set: (v: any) => {
+                this.globals[varName] = v;
+              },
+            };
+          }
+          const val = refs[param.name].get();
+          args[param.name] = val;
+          argValuesForLog.push(val);
+        } else if (argExpr.type === 'IndexAccessExpression') {
+          const idxExpr = argExpr as IndexAccessNode;
+          const obj = this.evaluateExpression(idxExpr.object);
+          const index = this.evaluateExpression(idxExpr.index);
+          refs[param.name] = {
+            get: () => (obj ? obj[index] : undefined),
+            set: (v: any) => {
+              if (obj) obj[index] = v;
+            },
+          };
+          const val = refs[param.name].get();
+          args[param.name] = val;
+          argValuesForLog.push(val);
+        } else {
+          let holder = this.evaluateExpression(argExpr);
+          refs[param.name] = {
+            get: () => holder,
+            set: (v: any) => {
+              holder = v;
+            },
+          };
+          args[param.name] = holder;
+          argValuesForLog.push(holder);
+        }
+      } else {
+        const val = argExpr ? this.evaluateExpression(argExpr) : undefined;
+        args[param.name] = val;
+        argValuesForLog.push(val);
+      }
     });
 
     const frame: Frame = {
       name,
       args,
       locals: Object.create(null),
+      refs,
       line: fn.line,
     };
 
     this.callStack.push(frame);
-    this.recordStep(fn.line, `Invoked function ${name}(${argValues.join(', ')})`);
+    this.recordStep(fn.line, `Invoked function ${name}(${argValuesForLog.join(', ')})`);
 
     let returnValue: any = undefined;
 
@@ -543,15 +648,7 @@ export class Evaluator {
       case 'AssignmentStatement': {
         const assign = stmt as AssignmentNode;
         const val = this.evaluateExpression(assign.value);
-        if (Object.prototype.hasOwnProperty.call(frame.locals, assign.target)) {
-          frame.locals[assign.target] = val;
-        } else if (Object.prototype.hasOwnProperty.call(frame.args, assign.target)) {
-          frame.args[assign.target] = val;
-        } else if (Object.prototype.hasOwnProperty.call(this.globals, assign.target)) {
-          this.globals[assign.target] = val;
-        } else {
-          frame.locals[assign.target] = val;
-        }
+        this.setVariableValue(assign.target, val);
         this.recordStep(stmt.line, `Updated ${assign.target} = ${val}`);
         return;
       }
@@ -746,8 +843,11 @@ export class Evaluator {
         if (id === 'INT_MIN' || id === 'LONG_MIN') return -2147483648;
         if (id === 'INT_MAX' || id === 'LONG_MAX') return 2147483647;
 
-        // P0: Safe check against frame.locals and frame.args without prototype pollution
+        // P0: Safe check against frame.locals, frame.args, and frame.refs without prototype pollution
         if (frame) {
+          if (frame.refs && frame.refs[id]) {
+            return frame.refs[id].get();
+          }
           if (Object.prototype.hasOwnProperty.call(frame.locals, id)) {
             return frame.locals[id];
           }
@@ -1027,8 +1127,6 @@ export class Evaluator {
               if (!pNode.children) pNode.children = [];
               if (!pNode.children.includes(cStr)) {
                 pNode.children.push(cStr);
-                if (!pNode.left) pNode.left = cStr;
-                else if (!pNode.right) pNode.right = cStr;
               }
               const cNode = this.heap.get(cStr)!;
               if (!cNode.parent) cNode.parent = pStr;
@@ -1075,16 +1173,19 @@ export class Evaluator {
 
       case 'CallExpression': {
         const call = expr as CallExpressionNode;
-        const argValues = call.args.map((a: BaseASTNode) => this.evaluateExpression(a));
 
         if (call.callee === 'max') {
-          return Math.max(argValues[0], argValues[1]);
+          const a = this.evaluateExpression(call.args[0]);
+          const b = this.evaluateExpression(call.args[1]);
+          return Math.max(a, b);
         }
         if (call.callee === 'min') {
-          return Math.min(argValues[0], argValues[1]);
+          const a = this.evaluateExpression(call.args[0]);
+          const b = this.evaluateExpression(call.args[1]);
+          return Math.min(a, b);
         }
 
-        return this.callFunction(call.callee, argValues);
+        return this.callFunction(call.callee, call.args);
       }
 
       case 'ConditionalExpression': {
