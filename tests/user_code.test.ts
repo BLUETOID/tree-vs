@@ -192,11 +192,20 @@ int main() {
     for (const step of result.trace) {
       if (step.treeSnapshot) {
         computeTreeLayout(step.treeSnapshot.nodes, step.treeSnapshot.rootId);
+        // Verify depth, maxd, d, n, i never appear as pointer badges
+        const pointerNames = step.treeSnapshot.pointers.map((p) => p.name);
+        expect(pointerNames).not.toContain('depth');
+        expect(pointerNames).not.toContain('maxd');
+        expect(pointerNames).not.toContain('d');
+        expect(pointerNames).not.toContain('n');
+        expect(pointerNames).not.toContain('i');
       }
     }
     const lastEvent = result.trace[result.trace.length - 1];
     expect(lastEvent.treeSnapshot).toBeDefined();
     expect(lastEvent.treeSnapshot!.rootId).toBe('1');
+    // In main() at the end, only root should be a pointer badge
+    expect(lastEvent.treeSnapshot!.pointers.map((p) => p.name)).toEqual(['root']);
     const layout = computeTreeLayout(lastEvent.treeSnapshot!.nodes, lastEvent.treeSnapshot!.rootId);
     expect(layout.nodes.length).toBe(8);
     expect(layout.edges.length).toBe(7);

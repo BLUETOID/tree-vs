@@ -75,6 +75,7 @@ export interface CallStackFrame {
   id: string;
   functionName: string;
   args: Record<string, any>;
+  locals?: Record<string, any>;
   retVal?: any;
   status: 'active' | 'returning' | 'completed';
 }

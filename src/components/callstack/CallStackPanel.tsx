@@ -42,13 +42,19 @@ export const CallStackPanel: React.FC<CallStackPanelProps> = ({
                   <span className="frame-badge">#{idx}</span>
                   <span className="frame-func-name">{frame.functionName}</span>
                 </div>
-                {Object.keys(frame.args).length > 0 && (
+                {(Object.keys(frame.args).length > 0 || (frame.locals && Object.keys(frame.locals).length > 0)) && (
                   <div className="frame-params">
                     {Object.entries(frame.args).map(([k, v]) => (
-                      <span key={k} className="param-tag">
+                      <span key={`arg-${k}`} className="param-tag">
                         {k} = {typeof v === 'string' && nodes[v] ? `Node(${nodes[v].val})` : String(v)}
                       </span>
                     ))}
+                    {frame.locals &&
+                      Object.entries(frame.locals).map(([k, v]) => (
+                        <span key={`local-${k}`} className="param-tag">
+                          {k} = {typeof v === 'string' && nodes[v] ? `Node(${nodes[v].val})` : String(v)}
+                        </span>
+                      ))}
                   </div>
                 )}
               </div>

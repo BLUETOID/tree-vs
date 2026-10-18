@@ -294,11 +294,76 @@ export class Evaluator {
       pointers.push({ name: 'root', nodeId: rootId, color: '#06b6d4' });
     }
 
+    const NON_POINTER_NAMES = new Set([
+      'depth',
+      'maxd',
+      'mind',
+      'max_depth',
+      'min_depth',
+      'maxdepth',
+      'mindepth',
+      'd',
+      'dist',
+      'distance',
+      'n',
+      'm',
+      'k',
+      'i',
+      'j',
+      'idx',
+      'index',
+      'sz',
+      'size',
+      'len',
+      'length',
+      'ans',
+      'sum',
+      'cnt',
+      'count',
+      'total',
+      'val',
+      'value',
+      'timer',
+      'tin',
+      'tout',
+      'cost',
+      'wt',
+      'weight',
+      'height',
+      'h',
+    ]);
+
+    const VALID_NODE_PARAM_NAMES = new Set([
+      'root',
+      'node',
+      'curr',
+      'parent',
+      'child',
+      'neighbour',
+      'neighbor',
+      'src',
+      'dest',
+      'target',
+      'p',
+      'q',
+      'res',
+      'temp',
+    ]);
+
     if (currentFrame) {
       const allVars = { ...currentFrame.args, ...currentFrame.locals };
       for (const [varName, val] of Object.entries(allVars)) {
+        if (NON_POINTER_NAMES.has(varName.toLowerCase())) continue;
+
         const idKey = typeof val === 'string' || typeof val === 'number' ? String(val) : null;
         if (idKey && this.heap.has(idKey)) {
+          const isHeapPtr = typeof val === 'string' && val.startsWith('n');
+          const isNodeVar =
+            VALID_NODE_PARAM_NAMES.has(varName) ||
+            (currentFrame.name !== 'main' && (varName === 'u' || varName === 'v'));
+
+          if (!isHeapPtr && !isNodeVar) continue;
+
           let color = '#38bdf8';
           let displayName = varName;
 
@@ -323,10 +388,18 @@ export class Evaluator {
             color = '#ec4899';
           } else if (varName === 'res') {
             color = '#10b981';
+          } else if (varName === 'v' || varName === 'child' || varName === 'neighbour' || varName === 'neighbor') {
+            color = '#34d399';
+          } else if (varName === 'u' || varName === 'src') {
+            color = '#60a5fa';
+          } else if (varName === 'dest' || varName === 'target') {
+            color = '#f43f5e';
           }
 
           pointers.push({ name: displayName, nodeId: idKey, color });
-          if (!activeNodeId) activeNodeId = idKey;
+          if (!activeNodeId && (varName === 'node' || varName === 'curr' || isHeapPtr)) {
+            activeNodeId = idKey;
+          }
         } else if (val && typeof val === 'object' && val.__type === 'queue') {
           queueState = val.items.map((item: any) =>
             typeof item === 'string' && this.heap.has(item) ? this.heap.get(item)!.val : item
@@ -416,10 +489,16 @@ export class Evaluator {
               formattedArgs[k] = actualVal;
             }
           }
+          const formattedLocals: Record<string, any> = {};
+          for (const [k, v] of Object.entries(f.locals)) {
+            if (k === 'adj' || k === 'tree' || Array.isArray(v) || (v && typeof v === 'object' && v.__type)) continue;
+            formattedLocals[k] = v;
+          }
           return {
             id: `frame_${idx}`,
             functionName: `${f.name}()`,
             args: formattedArgs,
+            locals: formattedLocals,
             status: 'active',
           };
         }),
