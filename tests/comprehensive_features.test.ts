@@ -305,6 +305,44 @@ describe('Comprehensive C++ Language & Edge Case Tests', () => {
       expect(res.error).toBeUndefined();
       expect(res.stdout).toBe('10 20 30');
     });
+
+    it('supports vector assign(count, val) and assign(initializer_list)', () => {
+      const code = `
+        #include <iostream>
+        #include <vector>
+        using namespace std;
+        int main() {
+          vector<int> v;
+          v.assign(4, 7);
+          cout << v.size() << " " << v[0] << " " << v[3] << " ";
+          v.assign({10, 20, 30});
+          cout << v.size() << " " << v[0] << " " << v[1] << " " << v[2];
+        }
+      `;
+      const res = runCppTreeInterpreter(code);
+      expect(res.error).toBeUndefined();
+      expect(res.stdout).toBe('4 7 7 3 10 20 30');
+    });
+
+    it('supports vector<vector<int>> assign(n, {}) with independent inner vectors', () => {
+      const code = `
+        #include <iostream>
+        #include <vector>
+        using namespace std;
+        int main() {
+          vector<vector<int>> tree;
+          tree.assign(3, {});
+          tree[0].push_back(100);
+          tree[1].push_back(200);
+          cout << tree[0].size() << ":" << tree[0][0] << " "
+               << tree[1].size() << ":" << tree[1][0] << " "
+               << tree[2].size();
+        }
+      `;
+      const res = runCppTreeInterpreter(code);
+      expect(res.error).toBeUndefined();
+      expect(res.stdout).toBe('1:100 1:200 0');
+    });
   });
 
   describe('5. Loop Control Flow & Continue/Break Semantics', () => {
@@ -510,5 +548,65 @@ describe('Comprehensive C++ Language & Edge Case Tests', () => {
       expect(res.error).toBeUndefined();
       expect(res.stdout).toBe('LCA(4, 5): 2, LCA(4, 6): 1');
     });
+
+    it('supports vector assign method and maximum matching DFS', () => {
+      const code = `
+#include <bits/stdc++.h>
+
+using namespace std;
+
+vector < vector < int >> tree;
+vector < int > matched;
+int cnt = 0;
+void dfs(int node, int parent) {
+    for (auto child: tree[node]) {
+        if (child == parent) continue;
+        dfs(child, node);
+    }
+    for (auto child: tree[node]) {
+        if (child == parent) continue;
+
+        if (!matched[child] && !matched[node]) {
+            matched[child] = true;
+            matched[node] = true;
+            cnt++;
+            break;
+        }
+    }
+
+}
+int main() {
+    int n;
+    cin >> n;
+    tree.assign(n + 1, {});
+    matched.assign(n + 1, false);
+    for (int i = 1; i < n; i++) {
+        int a, b;
+        cin >> a >> b;
+        tree[a].push_back(b);
+        tree[b].push_back(a);
+    }
+
+    dfs(1, -1);
+
+    cout << cnt << "\\n";
+}
+      `;
+      const input = `4
+1 2
+1 3
+2 4`;
+      const res = runCppTreeInterpreter(code, input);
+      expect(res.error).toBeUndefined();
+      expect(res.stdout.trim()).toBe('2');
+      expect(res.trace.length).toBeGreaterThan(10);
+      const lastEvent = res.trace[res.trace.length - 1];
+      expect(lastEvent.treeSnapshot).toBeDefined();
+      expect(lastEvent.treeSnapshot!.rootId).toBe('1');
+      const layout = computeTreeLayout(lastEvent.treeSnapshot!.nodes, lastEvent.treeSnapshot!.rootId);
+      expect(layout.nodes.length).toBe(4);
+      expect(layout.edges.length).toBe(3);
+    });
   });
 });
+

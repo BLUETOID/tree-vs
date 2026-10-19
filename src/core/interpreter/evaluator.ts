@@ -69,6 +69,49 @@ function createVector(initialItems: any[] = []): any[] {
   (arr as any).clear = function () {
     this.length = 0;
   };
+  (arr as any).assign = function (...args: any[]) {
+    this.length = 0;
+    const isNested = (this as any).__is2DVector;
+    const depth = (this as any).__nestingDepth || (isNested ? 2 : 1);
+    const cloneValue = (v: any): any => {
+      if (Array.isArray(v)) {
+        const copy = createVector(v.map(cloneValue));
+        if (depth > 1) {
+          const innerDepth = depth - 1;
+          (copy as any).__is2DVector = innerDepth > 1;
+          (copy as any).__nestingDepth = innerDepth;
+        }
+        return copy;
+      }
+      if (v && typeof v === 'object') {
+        return { ...v };
+      }
+      return v;
+    };
+    if (args.length === 1 && Array.isArray(args[0])) {
+      for (const item of args[0]) {
+        this.push(cloneValue(item));
+      }
+    } else {
+      const newSize = Number(args[0]) || 0;
+      const hasVal = args.length > 1;
+      const fillVal = args[1];
+      for (let i = 0; i < newSize; i++) {
+        if (hasVal) {
+          this.push(cloneValue(fillVal));
+        } else if (isNested && depth > 1) {
+          const inner = createVector();
+          if (depth - 1 > 1) {
+            (inner as any).__is2DVector = true;
+            (inner as any).__nestingDepth = depth - 1;
+          }
+          this.push(inner);
+        } else {
+          this.push(0);
+        }
+      }
+    }
+  };
   return arr;
 }
 
@@ -1490,6 +1533,56 @@ export class Evaluator {
               }
             }
             obj.length = newSize;
+            return;
+          }
+          if (memCall.method === 'assign') {
+            obj.length = 0;
+            const isNested = (obj as any).__is2DVector;
+            const depth = (obj as any).__nestingDepth || (isNested ? 2 : 1);
+
+            const cloneValue = (v: any): any => {
+              if (Array.isArray(v)) {
+                const copy = createVector(v.map(cloneValue));
+                if (depth > 1) {
+                  const innerDepth = depth - 1;
+                  (copy as any).__is2DVector = innerDepth > 1;
+                  (copy as any).__nestingDepth = innerDepth;
+                }
+                return copy;
+              }
+              if (v && typeof v === 'object') {
+                return { ...v };
+              }
+              return v;
+            };
+
+            if (args.length === 1 && Array.isArray(args[0])) {
+              for (const item of args[0]) {
+                obj.push(cloneValue(item));
+              }
+            } else {
+              const newSize = Number(args[0]) || 0;
+              const hasVal = args.length > 1;
+              const fillVal = args[1];
+              for (let i = 0; i < newSize; i++) {
+                if (hasVal) {
+                  obj.push(cloneValue(fillVal));
+                } else if (isNested && depth > 1) {
+                  const inner = createVector();
+                  if (depth - 1 > 1) {
+                    (inner as any).__is2DVector = true;
+                    (inner as any).__nestingDepth = depth - 1;
+                  }
+                  obj.push(inner);
+                } else {
+                  obj.push(0);
+                }
+              }
+            }
+            this.recordStep(
+              expr.line,
+              `assign(${args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : a)).join(', ')})`
+            );
             return;
           }
           if (memCall.method === 'back') {
