@@ -378,16 +378,38 @@ export class Parser {
       'Node',
       'ListNode',
       'queue',
+      'priority_queue',
+      'deque',
       'vector',
       'stack',
       'pair',
+      'map',
+      'unordered_map',
+      'multimap',
+      'set',
+      'unordered_set',
+      'multiset',
       'std',
     ]);
     const next = this.peekNext();
     const isStdType =
       token.value === 'std' &&
       next.value === '::' &&
-      ['vector', 'pair', 'queue', 'stack', 'string'].includes(this.tokens[this.pos + 2]?.value);
+      [
+        'vector',
+        'pair',
+        'queue',
+        'priority_queue',
+        'deque',
+        'stack',
+        'string',
+        'map',
+        'unordered_map',
+        'multimap',
+        'set',
+        'unordered_set',
+        'multiset',
+      ].includes(this.tokens[this.pos + 2]?.value);
 
     if (
       isStdType ||
@@ -440,15 +462,37 @@ export class Parser {
     this.expect('(');
 
     // Look ahead to detect range-based for loop:
-    // e.g. for (auto i: tree[node]) or for (auto i : tree[node]) or for (int x : vec)
+    // e.g. for (auto i: tree[node]) or for (auto i : tree[node]) or for (int x : vec) or for (auto &[key, value] : mp)
     const savedPos = this.pos;
     let isRangeFor = false;
     let rangeVarType = '';
-    let rangeVarName = '';
+    let rangeVarName: string | undefined;
+    let rangeBindings: string[] | undefined;
 
     try {
       const typeStr = this.parseTypeString();
-      if (this.peek().type === 'IDENTIFIER' || this.peek().type === 'KEYWORD') {
+      if (this.peek().value === '[') {
+        // Structured binding: for (auto &[a, b] : mp) or for (auto [a, b] : mp)
+        this.advance(); // '['
+        const bindings: string[] = [];
+        while (this.peek().type !== 'EOF' && this.peek().value !== ']') {
+          if (this.peek().value === '&') {
+            this.advance();
+          }
+          if (this.peek().type === 'IDENTIFIER' || this.peek().type === 'KEYWORD') {
+            bindings.push(this.advance().value);
+          }
+          if (this.peek().value === ',') {
+            this.advance();
+          }
+        }
+        this.expect(']');
+        if (this.peek().value === ':') {
+          isRangeFor = true;
+          rangeVarType = typeStr;
+          rangeBindings = bindings;
+        }
+      } else if (this.peek().type === 'IDENTIFIER' || this.peek().type === 'KEYWORD') {
         const idToken = this.advance();
         if (this.peek().value === ':') {
           isRangeFor = true;
@@ -470,6 +514,7 @@ export class Parser {
         line: forToken.line,
         varType: rangeVarType,
         varName: rangeVarName,
+        bindings: rangeBindings,
         iterable,
         body,
       } as RangeForStatementNode;
@@ -498,15 +543,37 @@ export class Parser {
         'Node',
         'ListNode',
         'queue',
+        'priority_queue',
+        'deque',
         'vector',
         'stack',
         'pair',
+        'map',
+        'unordered_map',
+        'multimap',
+        'set',
+        'unordered_set',
+        'multiset',
         'std',
       ]);
       const isStdType =
         this.peek().value === 'std' &&
         this.peekNext().value === '::' &&
-        ['vector', 'pair', 'queue', 'stack', 'string'].includes(this.tokens[this.pos + 2]?.value);
+        [
+          'vector',
+          'pair',
+          'queue',
+          'priority_queue',
+          'deque',
+          'stack',
+          'string',
+          'map',
+          'unordered_map',
+          'multimap',
+          'set',
+          'unordered_set',
+          'multiset',
+        ].includes(this.tokens[this.pos + 2]?.value);
 
       if (
         isStdType ||

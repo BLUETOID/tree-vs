@@ -51,6 +51,80 @@ interface VectorArrayObject {
   map: Map<any, any[]>;
 }
 
+interface MapObject {
+  __type: 'map';
+  isUnordered?: boolean;
+  entries: Map<any, any>;
+  size: () => number;
+  empty: () => boolean;
+  clear: () => void;
+  count: (k: any) => number;
+  erase: (k: any) => void;
+}
+
+interface SetObject {
+  __type: 'set';
+  isUnordered?: boolean;
+  items: Set<any>;
+  size: () => number;
+  empty: () => boolean;
+  clear: () => void;
+  count: (k: any) => number;
+  insert: (k: any) => void;
+  erase: (k: any) => void;
+}
+
+function createMap(isUnordered = false): MapObject {
+  const map = new Map<any, any>();
+  return {
+    __type: 'map',
+    isUnordered,
+    entries: map,
+    size() {
+      return map.size;
+    },
+    empty() {
+      return map.size === 0;
+    },
+    clear() {
+      map.clear();
+    },
+    count(k: any) {
+      return map.has(k) ? 1 : 0;
+    },
+    erase(k: any) {
+      map.delete(k);
+    },
+  };
+}
+
+function createSet(isUnordered = false): SetObject {
+  const set = new Set<any>();
+  return {
+    __type: 'set',
+    isUnordered,
+    items: set,
+    size() {
+      return set.size;
+    },
+    empty() {
+      return set.size === 0;
+    },
+    clear() {
+      set.clear();
+    },
+    count(k: any) {
+      return set.has(k) ? 1 : 0;
+    },
+    insert(k: any) {
+      set.add(k);
+    },
+    erase(k: any) {
+      set.delete(k);
+    },
+  };
+}
+
 function createVector(initialItems: any[] = []): any[] {
   const arr: any[] = [...initialItems];
   (arr as any).__type = 'vector';
@@ -162,6 +236,12 @@ const NON_POINTER_NAMES = new Set([
   'weight',
   'height',
   'h',
+  'level',
+  'mp',
+  'map',
+  'set',
+  'visited',
+  'vis',
 ]);
 
 const VALID_NODE_PARAM_NAMES = new Set([
@@ -226,12 +306,36 @@ export class Evaluator {
     const isPair = varType.startsWith('pair') || varType.startsWith('std::pair') || varType.startsWith('std:: pair');
     const isQueue = varType.startsWith('queue') || varType.startsWith('std::queue');
     const isStack = varType.startsWith('stack') || varType.startsWith('std::stack');
+    const isMap =
+      varType.startsWith('map') ||
+      varType.startsWith('std::map') ||
+      varType.startsWith('std:: map') ||
+      varType.startsWith('unordered_map') ||
+      varType.startsWith('std::unordered_map') ||
+      varType.startsWith('std:: unordered_map') ||
+      varType.startsWith('multimap') ||
+      varType.startsWith('std::multimap');
+    const isSet =
+      varType.startsWith('set') ||
+      varType.startsWith('std::set') ||
+      varType.startsWith('std:: set') ||
+      varType.startsWith('unordered_set') ||
+      varType.startsWith('std::unordered_set') ||
+      varType.startsWith('std:: unordered_set') ||
+      varType.startsWith('multiset') ||
+      varType.startsWith('std::multiset');
 
     if (isQueue) {
       return { __type: 'queue', items: [] } as QueueObject;
     }
     if (isStack) {
       return { __type: 'stack', items: [] } as StackObject;
+    }
+    if (isMap) {
+      return createMap(varType.includes('unordered'));
+    }
+    if (isSet) {
+      return createSet(varType.includes('unordered'));
     }
 
     if (isVector) {
@@ -927,7 +1031,9 @@ export class Evaluator {
             obj && typeof obj === 'object'
               ? obj.__type === 'vector_array'
                 ? obj.map.get(idx) || 0
-                : obj[idx] || 0
+                : obj.__type === 'map'
+                  ? obj.entries.get(idx) || 0
+                  : obj[idx] || 0
               : 0;
           let newVal = currentVal;
           if (comp.operator === '+=') newVal = currentVal + val;
@@ -942,6 +1048,7 @@ export class Evaluator {
           }
           if (obj && typeof obj === 'object') {
             if (obj.__type === 'vector_array') obj.map.set(idx, newVal);
+            else if (obj.__type === 'map') obj.entries.set(idx, newVal);
             else obj[idx] = newVal;
           }
           this.recordStep(stmt.line, `[${idx}] ${comp.operator} ${val} -> ${newVal}`);
@@ -967,6 +1074,8 @@ export class Evaluator {
         if (obj && typeof obj === 'object') {
           if (obj.__type === 'vector_array') {
             obj.map.set(idx, val);
+          } else if (obj.__type === 'map') {
+            obj.entries.set(idx, val);
           } else {
             obj[idx] = val;
           }
@@ -1005,13 +1114,69 @@ export class Evaluator {
       case 'RangeForStatement': {
         const rangeFor = stmt as RangeForStatementNode;
         const iterable = this.evaluateExpression(rangeFor.iterable);
-        const items = Array.isArray(iterable) ? iterable : [];
+        let items: any[] = [];
+        if (Array.isArray(iterable)) {
+          items = iterable;
+        } else if (iterable && typeof iterable === 'object') {
+          if (iterable.__type === 'map') {
+            const m = iterable as MapObject;
+            const entries = Array.from(m.entries.entries());
+            if (!m.isUnordered) {
+              entries.sort((a, b) => {
+                const k1 = a[0];
+                const k2 = b[0];
+                if (typeof k1 === 'number' && typeof k2 === 'number') return k1 - k2;
+                return String(k1).localeCompare(String(k2));
+              });
+            }
+            items = entries.map(([k, v]) => ({ first: k, second: v, key: k, value: v }));
+          } else if (iterable.__type === 'set') {
+            const s = iterable as SetObject;
+            const values = Array.from(s.items.values());
+            if (!s.isUnordered) {
+              values.sort((a, b) => {
+                if (typeof a === 'number' && typeof b === 'number') return a - b;
+                return String(a).localeCompare(String(b));
+              });
+            }
+            items = values;
+          }
+        }
+
         for (const item of items) {
-          frame.locals[rangeFor.varName] = item;
-          this.recordStep(
-            stmt.line,
-            `for (${rangeFor.varName} : tree): ${rangeFor.varName} = ${item}`
-          );
+          if (rangeFor.bindings && rangeFor.bindings.length > 0) {
+            const b1 = rangeFor.bindings[0];
+            const b2 = rangeFor.bindings[1];
+            if (b1 !== undefined) {
+              frame.locals[b1] = item && typeof item === 'object' && 'first' in item ? item.first : item;
+            }
+            if (b2 !== undefined) {
+              const val = item && typeof item === 'object' && 'second' in item ? item.second : undefined;
+              frame.locals[b2] = val;
+              if (rangeFor.varType.includes('&') && iterable && typeof iterable === 'object' && iterable.__type === 'map') {
+                const mapObj = iterable as MapObject;
+                const mapKey = item.first;
+                frame.refs = frame.refs || {};
+                frame.refs[b2] = {
+                  get: () => mapObj.entries.get(mapKey),
+                  set: (newV: any) => mapObj.entries.set(mapKey, newV),
+                };
+              }
+            }
+            for (let i = 2; i < rangeFor.bindings.length; i++) {
+              frame.locals[rangeFor.bindings[i]] = Array.isArray(item) ? item[i] : undefined;
+            }
+            this.recordStep(
+              stmt.line,
+              `for ([${rangeFor.bindings.join(', ')}]): ${rangeFor.bindings.map((b) => `${b} = ${frame.locals[b]}`).join(', ')}`
+            );
+          } else if (rangeFor.varName) {
+            frame.locals[rangeFor.varName] = item;
+            this.recordStep(
+              stmt.line,
+              `for (${rangeFor.varName} : iterable): ${rangeFor.varName} = ${typeof item === 'object' && item !== null && 'first' in item ? `{${item.first}, ${item.second}}` : item}`
+            );
+          }
           const res = this.executeStatement(rangeFor.body);
           if (res && res.__return__) return res;
           if (res && res.__break__) break;
@@ -1174,6 +1339,12 @@ export class Evaluator {
             }
             return obj.map.get(idx);
           }
+          if (obj.__type === 'map') {
+            if (!obj.entries.has(idx)) {
+              obj.entries.set(idx, 0);
+            }
+            return obj.entries.get(idx);
+          }
           if (Array.isArray(obj)) {
             if (obj[idx] === undefined) {
               if ((obj as any).__is2DVector) {
@@ -1208,10 +1379,17 @@ export class Evaluator {
           const idxExpr = update.argument as IndexAccessNode;
           const obj = this.evaluateExpression(idxExpr.object);
           const idx = this.evaluateExpression(idxExpr.index);
-          const currentVal = Number(obj[idx]) || 0;
+          const currentVal =
+            obj && typeof obj === 'object' && obj.__type === 'map'
+              ? Number(obj.entries.get(idx)) || 0
+              : Number(obj?.[idx]) || 0;
           const diff = update.operator === '++' ? 1 : -1;
           const newVal = currentVal + diff;
-          obj[idx] = newVal;
+          if (obj && typeof obj === 'object' && obj.__type === 'map') {
+            obj.entries.set(idx, newVal);
+          } else if (obj) {
+            obj[idx] = newVal;
+          }
           return update.prefix ? newVal : currentVal;
         }
         throw new Error(`Invalid operand for ${update.operator} at line ${expr.line}`);
@@ -1278,6 +1456,7 @@ export class Evaluator {
               const idx = this.evaluateExpression(idxExpr.index);
               if (obj && typeof obj === 'object') {
                 if (obj.__type === 'vector_array') obj.map.set(idx, val);
+                else if (obj.__type === 'map') obj.entries.set(idx, val);
                 else obj[idx] = val;
               }
               this.recordStep(expr.line, `cin >> [${idx}] (read ${val})`);
@@ -1443,6 +1622,55 @@ export class Evaluator {
           }
           if (memCall.method === 'size') {
             return st.items.length;
+          }
+        }
+
+        if (obj && typeof obj === 'object' && obj.__type === 'map') {
+          const m = obj as MapObject;
+          if (memCall.method === 'size') {
+            return m.size();
+          }
+          if (memCall.method === 'empty') {
+            return m.empty();
+          }
+          if (memCall.method === 'clear') {
+            m.clear();
+            return;
+          }
+          if (memCall.method === 'count') {
+            return m.count(args[0]);
+          }
+          if (memCall.method === 'erase') {
+            m.erase(args[0]);
+            return;
+          }
+          if (memCall.method === 'find') {
+            return m.entries.has(args[0]) ? { first: args[0], second: m.entries.get(args[0]) } : null;
+          }
+        }
+
+        if (obj && typeof obj === 'object' && obj.__type === 'set') {
+          const s = obj as SetObject;
+          if (memCall.method === 'size') {
+            return s.size();
+          }
+          if (memCall.method === 'empty') {
+            return s.empty();
+          }
+          if (memCall.method === 'clear') {
+            s.clear();
+            return;
+          }
+          if (memCall.method === 'count') {
+            return s.count(args[0]);
+          }
+          if (memCall.method === 'insert') {
+            s.insert(args[0]);
+            return;
+          }
+          if (memCall.method === 'erase') {
+            s.erase(args[0]);
+            return;
           }
         }
 

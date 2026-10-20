@@ -88,7 +88,8 @@ export interface ForStatementNode extends BaseASTNode {
 export interface RangeForStatementNode extends BaseASTNode {
   type: 'RangeForStatement';
   varType: string;
-  varName: string;
+  varName?: string;
+  bindings?: string[];
   iterable: BaseASTNode;
   body: BaseASTNode;
 }

@@ -335,6 +335,98 @@ int main() {
       }
     }
   });
+
+  it('runs user map and structured binding code', () => {
+    const code = `#include <bits/stdc++.h>
+using namespace std;
+
+vector<int>tree[100005];
+
+void dfs(int node,int parent,int level , map<int,int>& mp){
+    mp[level] = max(mp[level],node);
+    
+    for(auto child:tree[node]){
+        if(child != parent){
+            dfs(child,node,level+1,mp);
+        }
+    }
+}
+
+int main() {
+    int n;
+    cin>>n;
+    
+    for(int i=1;i<n;i++){
+        int a,b;
+        cin>>a>>b;
+        tree[a].push_back(b);
+        tree[b].push_back(a);
+    }
+    
+    map<int,int>mp;
+    dfs(1,-1,1,mp);
+    
+    cout<<mp.size()<<endl;
+    
+    for(auto &[key,value]:mp){
+        cout<<value<<" ";
+    }
+}`;
+
+    const input = `4
+1 2
+1 3
+2 4`;
+
+    const result = runCppTreeInterpreter(code, input);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('3\n1 3 4');
+  });
+
+  it('runs map with auto [k, v] and pair iteration', () => {
+    const code = `#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    map<int, int> mp;
+    mp[10] = 100;
+    mp[5] = 50;
+    
+    // Test auto [k, v] without reference
+    for (auto [k, v] : mp) {
+        cout << k << ":" << v << " ";
+    }
+    cout << endl;
+
+    // Test auto p with p.first and p.second
+    for (auto p : mp) {
+        cout << p.first << ":" << p.second << " ";
+    }
+}`;
+    const result = runCppTreeInterpreter(code, '');
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('5:50 10:100 \n5:50 10:100');
+  });
+
+  it('runs set operations with insert, erase, count, and iteration', () => {
+    const code = `#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    set<int> s;
+    s.insert(30);
+    s.insert(10);
+    s.insert(20);
+    cout << s.size() << endl;
+    cout << s.count(20) << " " << s.count(40) << endl;
+    for (int x : s) {
+        cout << x << " ";
+    }
+}`;
+    const result = runCppTreeInterpreter(code, '');
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toBe('3\n1 0\n10 20 30');
+  });
 });
 
 
